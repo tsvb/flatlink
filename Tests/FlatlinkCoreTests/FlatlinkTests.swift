@@ -100,6 +100,19 @@ final class Tree {
     #expect(t.fm.fileExists(atPath: t.root + "/flat/real-file.txt"))
 }
 
+@Test func pruneKeepsPhotoLabSidecarsWrittenBesideLinks() throws {
+    // PhotoLab writes <link name>.dop beside the link, so edits live in the link folder.
+    let t = try Tree()
+    try t.touch("src/day/A.RAF", "src/day/B.RAF")
+    _ = try t.run()
+    try t.touch("flat/day__A.RAF.dop", "flat/day__B.RAF.dop")
+    try t.fm.removeItem(atPath: t.root + "/src/day/A.RAF")
+    let (summary, events) = try t.run { $0.prune = true }
+    #expect(summary.pruned == 1 && summary.kept == 1 && events == [.prune("day__A.RAF")])
+    #expect(t.fm.fileExists(atPath: t.root + "/flat/day__A.RAF.dop"))
+    #expect(t.fm.fileExists(atPath: t.root + "/flat/day__B.RAF.dop"))
+}
+
 @Test func neverReplacesARealFileOrAForeignLink() throws {
     let t = try Tree()
     try t.touch("src/a.jpg", "src/b.jpg", "flat/a.jpg", "elsewhere.jpg")

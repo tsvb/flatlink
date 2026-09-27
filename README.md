@@ -62,8 +62,19 @@ Exit status: `0` success, `1` some links could not be created or removed (each i
 
 ### Where your edits are saved
 
-<!-- TODO before release: verify where PhotoLab writes the .dop sidecar for an image opened through
-     a link — beside the link or beside the original — and describe it here. -->
+PhotoLab saves your edits in a `.dop` sidecar **beside the link**, named after it
+(`PhotoLab-All/2026__2026-05-28__IMG_0001.CR3.dop`), not beside the original. The original photo is
+never touched. (Measured in PhotoLab 9.12.)
+
+That makes the link folder the home of your PhotoLab edits, so:
+
+- **Keep it.** Don't delete and rebuild the link folder once you've edited in it; re-run `flatlink`
+  into the same folder instead. It only ever adds or removes symlinks, never a `.dop`.
+- **Rename source folders with care.** A link's name comes from its path below the source, so
+  renaming `2026-05-28/` gives its photos new links, and PhotoLab sees them as unedited. The old
+  `.dop` files stay in the link folder, under the old names.
+- **Other apps won't see these edits**, because they aren't beside the original. Export from
+  PhotoLab to share the results.
 
 ## Why PhotoLab needs this
 
