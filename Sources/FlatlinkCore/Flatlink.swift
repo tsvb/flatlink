@@ -11,7 +11,7 @@ public enum ImageTypes {
     public static let all: Set<String> = jpeg.union(["tif", "tiff", "heic", "heif", "png"]).union(raw)
 }
 
-public struct FlattenOptions: Sendable {
+public struct FlattenOptions: Equatable, Sendable {
     public var source: String
     public var dest: String
     public var dryRun = false
@@ -26,26 +26,39 @@ public struct FlattenOptions: Sendable {
 }
 
 public struct FlattenSummary: Equatable, Sendable {
-    public var created = 0, kept = 0, skipped = 0, pruned = 0, paired = 0, failed = 0
+    /// `found` is the number of images that want a link; the other counts say what became of them.
+    public var found = 0, created = 0, kept = 0, relinked = 0, skipped = 0, pruned = 0, paired = 0, failed = 0
     public var dest = ""
 }
 
 public enum FlattenEvent: Hashable, Sendable {
     case link(String)
+    case relink(String)
     case skipPointsElsewhere(String)
     case skipRealFile(String)
+    /// Two images have the same link name: `source` is left out, the link belongs to `holder`.
+    case collision(name: String, source: String, holder: String)
     case prune(String)
+    case unreadable(String, String)
     case failed(String, String)
 }
 
 public enum FlattenError: Error, Equatable, CustomStringConvertible {
     case sourceNotFolder(String)
     case destIsSource
+    case destNotFolder(String)
+    case destNotWritable(String)
+    case pruneFoundNoImages(String)
 
     public var description: String {
         switch self {
         case .sourceNotFolder(let path): "source is not a folder: \(path)"
         case .destIsSource: "dest must differ from source"
+        case .destNotFolder(let path): "dest can't be used, this is not a folder: \(path)"
+        case .destNotWritable(let path): "dest can't be written to: \(path)"
+        case .pruneFoundNoImages(let path):
+            "no images found under \(path), so --prune would remove every link into it; nothing was removed. "
+                + "Is the drive connected, and is this the right folder?"
         }
     }
 }
@@ -53,9 +66,36 @@ public enum FlattenError: Error, Equatable, CustomStringConvertible {
 /// Link names encode the path below the source: `2024/Iceland/IMG_0001.CR3` → `2024__Iceland__IMG_0001.CR3`.
 public let linkSeparator = "__"
 
+/// The longest file name a folder holds: 255 bytes, or on Mac OS Extended 255 UTF-16 units.
+let longestName = 255
+
 /// Fills `dest` with one symlink per image under `source`. Never modifies anything but symlinks in `dest`.
 public func flatten(_ options: FlattenOptions, report: (FlattenEvent) -> Void = { _ in }) throws -> FlattenSummary {
+    try carryOut(plan(options), dryRun: options.dryRun, report: report)
+}
+
+/// What a run does about one image or one link.
+enum Step {
+    case keep
+    case link(String, to: String)
+    case relink(String, to: String)
+    case prune(String)
+    case skip(FlattenEvent)
+    case fail(FlattenEvent)
+}
+
+struct Plan {
+    var dest: String
+    var found = 0, paired = 0
+    var steps: [Step] = []
+}
+
+/// Decides everything a run will do, changing nothing, so a dry run and a real run can't disagree.
+func plan(_ options: FlattenOptions) throws -> Plan {
     let fm = FileManager.default
+    // An empty path would mean the current folder.
+    guard !options.source.isEmpty else { throw FlattenError.sourceNotFolder("") }
+    guard !options.dest.isEmpty else { throw FlattenError.destNotFolder("") }
     let root = canonicalPath(options.source)
     let dest = canonicalPath(options.dest)
 
@@ -64,76 +104,238 @@ public func flatten(_ options: FlattenOptions, report: (FlattenEvent) -> Void = 
         throw FlattenError.sourceNotFolder(root)
     }
     guard dest != root else { throw FlattenError.destIsSource }
-    if !options.dryRun {
-        try fm.createDirectory(atPath: dest, withIntermediateDirectories: true)
+
+    // The folder that decides what dest can hold: dest, or while it is missing the nearest one above it.
+    var anchor = dest
+    while !fm.fileExists(atPath: anchor, isDirectory: &isDir) {
+        // Something that is there but leads nowhere: a broken link.
+        guard (try? fm.attributesOfItem(atPath: anchor)) == nil else { throw FlattenError.destNotFolder(anchor) }
+        anchor = (anchor as NSString).deletingLastPathComponent
     }
+    guard isDir.boolValue else { throw FlattenError.destNotFolder(anchor) }
+    let volume = Volume(of: anchor)
 
-    var summary = FlattenSummary(dest: dest)
-    var wanted = Set<String>()
+    let scan = scanImages(root: root, dest: dest, options: options)
+    var plan = Plan(dest: dest, found: scan.images.count, paired: scan.paired)
+    plan.steps = scan.unreadable.map { .fail(.unreadable($0.path, $0.message)) }
 
-    for src in scanImages(root: root, dest: dest, options: options, paired: &summary.paired) {
-        let name = src.dropFirst(root.count + 1).split(separator: "/").joined(separator: linkSeparator)
-        wanted.insert(name)
-        let link = dest + "/" + name
-
-        if let target = try? fm.destinationOfSymbolicLink(atPath: link) {
-            if target == src {
-                summary.kept += 1
-            } else {
-                report(.skipPointsElsewhere(name))
-                summary.skipped += 1
-            }
-        } else if (try? fm.attributesOfItem(atPath: link)) != nil {
-            report(.skipRealFile(name))
-            summary.skipped += 1
-        } else if options.dryRun {
-            report(.link(name))
-            summary.created += 1
+    // Images that share a link name, in the order of the first of them.
+    typealias Image = (name: String, src: String, relative: String)
+    var rivalries: [[Image]] = []
+    var wanted: [String: Int] = [:]
+    for src in scan.images {
+        let relative = String(src.dropFirst(root.count + 1))
+        let name = relative.split(separator: "/").joined(separator: linkSeparator)
+        if let known = wanted[volume.key(name)] {
+            rivalries[known].append((name, src, relative))
         } else {
-            do {
-                try fm.createSymbolicLink(atPath: link, withDestinationPath: src)
-                report(.link(name))
-                summary.created += 1
-            } catch {
-                report(.failed(name, error.localizedDescription))
-                summary.failed += 1
-            }
+            wanted[volume.key(name)] = rivalries.count
+            rivalries.append([(name, src, relative)])
         }
     }
 
-    if options.prune, let entries = try? fm.contentsOfDirectory(atPath: dest) {
-        for name in entries.sorted() where !wanted.contains(name) {
-            let link = dest + "/" + name
-            // Only links whose target is gone; fileExists follows the link.
-            guard (try? fm.destinationOfSymbolicLink(atPath: link)) != nil, !fm.fileExists(atPath: link) else { continue }
-            report(.prune(name))
-            if !options.dryRun {
-                do { try fm.removeItem(atPath: link) } catch {
-                    report(.failed(name, error.localizedDescription))
-                    summary.failed += 1
-                    continue
-                }
+    for rivals in rivalries {
+        // The link belongs to the image it already leads to, or else to the first one.
+        var holder = rivals[0]
+        let link = dest + "/" + holder.name
+        let step: Step
+
+        if let target = try? fm.destinationOfSymbolicLink(atPath: link) {
+            if let owner = rivals.first(where: { target == $0.src || isSameFile(link, $0.src) }) {
+                holder = owner
+                step = .keep
+            } else if targetIsGone(link),
+                let heir = rivals.first(where: { target.hasSuffix("/" + $0.relative) }) ?? (isInside(target, root) ? holder : nil)
+            {
+                // A link of ours left dangling: the source was moved or renamed, or its drive mounts
+                // elsewhere. Repointing it keeps the link name, and so the edits in its .dop.
+                holder = heir
+                step = .relink(heir.name, to: heir.src)
+            } else {
+                step = .skip(.skipPointsElsewhere(holder.name))
             }
-            summary.pruned += 1
+        } else if (try? fm.attributesOfItem(atPath: link)) != nil {
+            step = .skip(.skipRealFile(holder.name))
+        } else if volume.length(of: holder.name) > longestName {
+            let reason = "the link name would be \(volume.length(of: holder.name)) long and a file name holds "
+                + "\(longestName); shorten the names of the folders above this photo"
+            step = .fail(.failed(holder.name, reason))
+        } else {
+            step = .link(holder.name, to: holder.src)
+        }
+
+        plan.steps.append(step)
+        for rival in rivals where rival.src != holder.src {
+            plan.steps.append(.skip(.collision(name: rival.name, source: rival.src, holder: holder.src)))
+        }
+    }
+
+    if options.prune, anchor == dest {
+        do {
+            // Only links into this source whose original is gone. A link into another folder or drive
+            // is not ours to judge, and an original that can't be reached is not a deleted one.
+            let stale = try fm.contentsOfDirectory(atPath: dest).sorted().filter { name in
+                let link = dest + "/" + name
+                guard wanted[volume.key(name)] == nil, let target = try? fm.destinationOfSymbolicLink(atPath: link) else {
+                    return false
+                }
+                return isInside(target, root) && targetIsGone(link)
+            }
+            // A source without images but with links into it looks like the empty mount point of an
+            // unplugged drive, not like a library whose photos were all deleted.
+            guard stale.isEmpty || !rivalries.isEmpty else { throw FlattenError.pruneFoundNoImages(root) }
+            plan.steps += stale.map { .prune($0) }
+        } catch let error as FlattenError {
+            throw error
+        } catch {
+            plan.steps.append(.fail(.unreadable(dest, error.localizedDescription)))
+        }
+    }
+
+    let writes = plan.steps.contains { step in
+        switch step {
+        case .link, .relink, .prune: true
+        case .keep, .skip, .fail: false
+        }
+    }
+    guard access(anchor, W_OK) == 0 || (anchor == dest && !writes) else { throw FlattenError.destNotWritable(dest) }
+    return plan
+}
+
+func carryOut(_ plan: Plan, dryRun: Bool, report: (FlattenEvent) -> Void) throws -> FlattenSummary {
+    let fm = FileManager.default
+    if !dryRun {
+        try fm.createDirectory(atPath: plan.dest, withIntermediateDirectories: true)
+    }
+    var summary = FlattenSummary(found: plan.found, paired: plan.paired, dest: plan.dest)
+
+    func change(_ name: String, _ event: FlattenEvent, _ count: WritableKeyPath<FlattenSummary, Int>, _ work: () throws -> Void) {
+        do {
+            if !dryRun { try work() }
+            report(event)
+            summary[keyPath: count] += 1
+        } catch {
+            report(.failed(name, error.localizedDescription))
+            summary.failed += 1
+        }
+    }
+
+    for step in plan.steps {
+        switch step {
+        case .keep:
+            summary.kept += 1
+        case .link(let name, let src):
+            change(name, .link(name), \.created) {
+                try fm.createSymbolicLink(atPath: plan.dest + "/" + name, withDestinationPath: src)
+            }
+        case .relink(let name, let src):
+            change(name, .relink(name), \.relinked) { try replaceLink(at: plan.dest + "/" + name, target: src) }
+        case .prune(let name):
+            change(name, .prune(name), \.pruned) {
+                // unlink, not removeItem: it can never remove a folder.
+                guard unlink(plan.dest + "/" + name) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            }
+        case .skip(let event):
+            report(event)
+            summary.skipped += 1
+        case .fail(let event):
+            report(event)
+            summary.failed += 1
         }
     }
     return summary
 }
 
-/// Absolute paths of the images to link, sorted by link name.
-func scanImages(root: String, dest: String, options: FlattenOptions, paired: inout Int) -> [String] {
+/// How the volume holding a folder tells file names apart and measures them.
+struct Volume {
+    var caseSensitive = false
+    var countsUTF16 = false
+
+    init(of folder: String) {
+        let values = try? URL(fileURLWithPath: folder).resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+        caseSensitive = values?.volumeSupportsCaseSensitiveNames ?? false
+        var info = statfs()
+        if statfs(folder, &info) == 0 {
+            let type = withUnsafeBytes(of: info.f_fstypename) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            countsUTF16 = type == "hfs"
+        }
+    }
+
+    /// Equal for two names that can't both be in one folder. Strings already compare equal whichever
+    /// way their accents are composed.
+    func key(_ name: String) -> String {
+        caseSensitive ? name : name.lowercased()
+    }
+
+    /// Names are stored with their accents decomposed.
+    func length(of name: String) -> Int {
+        let stored = name.decomposedStringWithCanonicalMapping
+        return countsUTF16 ? stored.utf16.count : stored.utf8.count
+    }
+}
+
+/// Whether the file a link points at is gone. Any failure other than "no such file" — no permission,
+/// an I/O error — means it can't be reached, not that it was deleted.
+func targetIsGone(_ link: String) -> Bool {
+    var info = stat()
+    guard stat(link, &info) != 0 else { return false }
+    return errno == ENOENT || errno == ENOTDIR
+}
+
+/// Whether two paths lead to the same file, however they are spelled.
+func isSameFile(_ a: String, _ b: String) -> Bool {
+    var x = stat(), y = stat()
+    return stat(a, &x) == 0 && stat(b, &y) == 0 && x.st_dev == y.st_dev && x.st_ino == y.st_ino
+}
+
+func isInside(_ path: String, _ folder: String) -> Bool {
+    path.hasPrefix(folder == "/" ? folder : folder + "/")
+}
+
+/// Points an existing link at `target` in one step, so a failure never leaves the name without a link.
+func replaceLink(at link: String, target: String) throws {
+    let temp = (link as NSString).deletingLastPathComponent + "/.flatlink-" + UUID().uuidString
+    try FileManager.default.createSymbolicLink(atPath: temp, withDestinationPath: target)
+    guard rename(temp, link) == 0 else {
+        let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+        unlink(temp)
+        throw POSIXError(code)
+    }
+}
+
+struct Scan {
+    /// Absolute paths of the images to link, sorted.
+    var images: [String] = []
+    var paired = 0
+    var unreadable: [(path: String, message: String)] = []
+}
+
+func scanImages(root: String, dest: String, options: FlattenOptions) -> Scan {
+    var scan = Scan()
     let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey]
     // Recursive on purpose — the opposite of PhotoLab's SkipsSubdirectoryDescendants — but, like
     // PhotoLab, skipping hidden files and package contents.
     guard let walker = FileManager.default.enumerator(
         at: URL(fileURLWithPath: root, isDirectory: true),
         includingPropertiesForKeys: keys,
-        options: [.skipsHiddenFiles, .skipsPackageDescendants]
-    ) else { return [] }
+        options: [.skipsHiddenFiles, .skipsPackageDescendants],
+        // Carry on past a folder that can't be read, but say so: its images will be missing.
+        errorHandler: { url, error in
+            scan.unreadable.append((url.path, error.localizedDescription))
+            return true
+        }
+    ) else {
+        scan.unreadable.append((root, "the folder can't be listed"))
+        return scan
+    }
 
     var filesByFolder: [String: [String]] = [:]
     for case let url as URL in walker {
-        guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
+        let values: URLResourceValues
+        do { values = try url.resourceValues(forKeys: Set(keys)) } catch {
+            scan.unreadable.append((url.path, error.localizedDescription))
+            continue
+        }
         // Symlinks are skipped so an earlier flat folder inside the tree isn't linked again.
         if values.isSymbolicLink == true { continue }
         if values.isDirectory == true {
@@ -144,7 +346,6 @@ func scanImages(root: String, dest: String, options: FlattenOptions, paired: ino
         filesByFolder[url.deletingLastPathComponent().path, default: []].append(url.lastPathComponent)
     }
 
-    var images: [String] = []
     for (folder, names) in filesByFolder {
         // A camera JPEG is "paired" when a RAW with the same stem is in the same folder.
         let rawStems: Set<String> = options.skipPairedJPEGs
@@ -153,13 +354,15 @@ func scanImages(root: String, dest: String, options: FlattenOptions, paired: ino
         for name in names {
             guard let (stem, ext) = splitExtension(name), options.extensions.contains(ext) else { continue }
             if ImageTypes.jpeg.contains(ext), rawStems.contains(stem) {
-                paired += 1
+                scan.paired += 1
                 continue
             }
-            images.append(folder + "/" + name)
+            scan.images.append(folder + "/" + name)
         }
     }
-    return images.sorted()
+    scan.images.sort()
+    scan.unreadable.sort { $0.path < $1.path }
+    return scan
 }
 
 /// Lowercased stem and extension, or nil when the name has no extension.
@@ -170,10 +373,10 @@ func splitExtension(_ name: String) -> (stem: String, ext: String)? {
 
 /// Absolute path with symlinks resolved as far as the path exists (like Python's `Path.resolve()`).
 /// Foundation's `resolvingSymlinksInPath` is avoided: it strips `/private` and leaves missing paths alone.
-public func canonicalPath(_ path: String) -> String {
+public func canonicalPath(_ path: String, relativeTo directory: String = FileManager.default.currentDirectoryPath) -> String {
     var absolute = (path as NSString).expandingTildeInPath
     if !absolute.hasPrefix("/") {
-        absolute = FileManager.default.currentDirectoryPath + "/" + absolute
+        absolute = directory + "/" + absolute
     }
     var existing = (absolute as NSString).standardizingPath
     var missing: [String] = []

@@ -120,7 +120,8 @@ final class Tree {
     let (summary, events) = try t.run()
     #expect(summary.skipped == 2 && summary.created == 0)
     #expect(Set(events) == [.skipRealFile("a.jpg"), .skipPointsElsewhere("b.jpg")])
-    #expect(t.links(in: "flat")["b.jpg"] == t.root + "/elsewhere.jpg")
+    #expect(t.links(in: "flat") == ["b.jpg": t.root + "/elsewhere.jpg"])
+    #expect(try t.fm.attributesOfItem(atPath: t.root + "/flat/a.jpg")[.type] as? FileAttributeType == .typeRegular)
 }
 
 @Test func extensionFilter() throws {
@@ -176,4 +177,506 @@ final class Tree {
     #expect(splitExtension("a.b.JPG")! == ("a.b", "jpg"))
     #expect(splitExtension("noext") == nil)
     #expect(splitExtension(".hidden") == nil)
+}
+
+// MARK: - Re-running after the source moved
+
+@Test func rerunRepointsLinksLeftDanglingByAMovedSource() throws {
+    let t = try Tree()
+    try t.touch("old/day/A.RAF", "old/top.jpg")
+    _ = try t.run("old", "flat")
+    try t.fm.moveItem(atPath: t.root + "/old", toPath: t.root + "/new")   // or the drive mounts elsewhere
+    try t.touch("flat/day__A.RAF.dop")
+
+    let (dry, dryEvents) = try t.run("new", "flat") { $0.dryRun = true }
+    #expect(dry.relinked == 2 && dryEvents == [.relink("day__A.RAF"), .relink("top.jpg")])
+    #expect(t.links(in: "flat")["day__A.RAF"] == t.root + "/old/day/A.RAF")
+
+    let (summary, events) = try t.run("new", "flat") { $0.prune = true }
+    #expect(summary.relinked == 2 && summary.created == 0 && summary.skipped == 0 && summary.pruned == 0)
+    #expect(events == dryEvents)
+    #expect(t.links(in: "flat") == [
+        "day__A.RAF": t.root + "/new/day/A.RAF",
+        "top.jpg": t.root + "/new/top.jpg",
+    ])
+    // Nothing but the two links and the sidecar: no temporary name is left behind.
+    #expect(try t.fm.contentsOfDirectory(atPath: t.root + "/flat").sorted() == ["day__A.RAF", "day__A.RAF.dop", "top.jpg"])
+
+    let (again, _) = try t.run("new", "flat")
+    #expect(again.kept == 2 && again.relinked == 0)
+}
+
+@Test func rerunRepointsADanglingLinkIntoTheSourceWhateverItPointedAt() throws {
+    // Two images share a link name and the one that held the link is deleted: the other takes it over.
+    let t = try Tree()
+    try t.touch("src/a/b__c.jpg", "src/a__b/c.jpg")
+    _ = try t.run()
+    #expect(t.links(in: "flat") == ["a__b__c.jpg": t.root + "/src/a/b__c.jpg"])
+    try t.fm.removeItem(atPath: t.root + "/src/a/b__c.jpg")
+    // With --prune too: a link that is repointed is not one to remove.
+    let (summary, events) = try t.run { $0.prune = true }
+    #expect(summary.relinked == 1 && summary.pruned == 0 && events == [.relink("a__b__c.jpg")])
+    #expect(t.links(in: "flat") == ["a__b__c.jpg": t.root + "/src/a__b/c.jpg"])
+}
+
+@Test func aLinkThatWorksIsNeverRepointed() throws {
+    // Two sources hold a photo of the same name, and a link into the source leads to another photo.
+    let t = try Tree()
+    try t.touch("volA/IMG_0001.CR3", "volA/day/x.jpg", "volA/other.jpg", "volB/IMG_0001.CR3")
+    _ = try t.run("volB", "flat")
+    try t.fm.createSymbolicLink(atPath: t.root + "/flat/day__x.jpg", withDestinationPath: t.root + "/volA/other.jpg")
+    let before = t.links(in: "flat")
+
+    for dryRun in [true, false] {
+        let (summary, events) = try t.run("volA", "flat") { $0.prune = true; $0.dryRun = dryRun }
+        #expect(summary.skipped == 2 && summary.relinked == 0 && summary.created == 1)
+        #expect(events == [.skipPointsElsewhere("IMG_0001.CR3"), .skipPointsElsewhere("day__x.jpg"), .link("other.jpg")])
+    }
+    #expect(t.links(in: "flat").filter { $0.key != "other.jpg" } == before)
+}
+
+@Test func aLinkThatLeadsToTheOriginalIsKeptHoweverItIsSpelled() throws {
+    let t = try Tree()
+    try t.touch("src/cam/c.RAF")
+    try t.fm.createDirectory(atPath: t.root + "/flat", withIntermediateDirectories: true)
+    try t.fm.createSymbolicLink(atPath: t.root + "/flat/cam__c.RAF", withDestinationPath: "../src/cam/c.RAF")
+    let (summary, events) = try t.run()
+    #expect(summary.kept == 1 && events.isEmpty)
+    #expect(t.links(in: "flat") == ["cam__c.RAF": "../src/cam/c.RAF"])
+}
+
+@Test func aDanglingLinkThatIsNotOursIsNeverRepointed() throws {
+    let t = try Tree()
+    try t.touch("src/day/a.jpg")
+    try t.fm.createDirectory(atPath: t.root + "/flat", withIntermediateDirectories: true)
+    try t.fm.createSymbolicLink(atPath: t.root + "/flat/day__a.jpg", withDestinationPath: t.root + "/unplugged/other.jpg")
+    let (summary, events) = try t.run { $0.prune = true }
+    #expect(summary.skipped == 1 && summary.relinked == 0 && summary.pruned == 0)
+    #expect(events == [.skipPointsElsewhere("day__a.jpg")])
+    #expect(t.links(in: "flat") == ["day__a.jpg": t.root + "/unplugged/other.jpg"])
+}
+
+// MARK: - Prune safety
+
+@Test func pruneInADryRunOrFromTheWrongSourceRemovesNothing() throws {
+    let t = try Tree()
+    try t.touch("src/a.jpg", "src/gone.jpg", "other/live.jpg", "flat/sub/inner.jpg", "flat/notes.txt")
+    _ = try t.run()
+    try t.touch("flat/a.jpg.dop", "flat/gone.jpg.dop")
+    try t.fm.createSymbolicLink(atPath: t.root + "/flat/foreign-live.jpg", withDestinationPath: t.root + "/other/live.jpg")
+    try t.fm.removeItem(atPath: t.root + "/src/gone.jpg")
+    let before = try t.fm.contentsOfDirectory(atPath: t.root + "/flat").sorted()
+
+    // 1. dry run + prune reports but removes nothing
+    let (dry, dryEvents) = try t.run { $0.prune = true; $0.dryRun = true }
+    #expect(dry.pruned == 1 && dryEvents == [.prune("gone.jpg")])
+    #expect(try t.fm.contentsOfDirectory(atPath: t.root + "/flat").sorted() == before)
+
+    // 2. missing source: throws, nothing removed
+    #expect(throws: FlattenError.sourceNotFolder(t.root + "/missing")) { try t.run("missing") { $0.prune = true } }
+    #expect(try t.fm.contentsOfDirectory(atPath: t.root + "/flat").sorted() == before)
+
+    // 3. another source: the dangling link points into src, so it is not this run's to remove
+    try t.fm.createDirectory(atPath: t.root + "/empty", withIntermediateDirectories: true)
+    let (wrong, wrongEvents) = try t.run("empty") { $0.prune = true }
+    #expect(wrong.pruned == 0 && wrongEvents.isEmpty)
+    #expect(try t.fm.contentsOfDirectory(atPath: t.root + "/flat").sorted() == before)
+
+    // 4. the right source: only the dangling link goes; live links (ours and foreign), folders, files, .dop stay
+    let (summary, events) = try t.run { $0.prune = true }
+    #expect(summary.pruned == 1 && events == [.prune("gone.jpg")])
+    #expect(try t.fm.contentsOfDirectory(atPath: t.root + "/flat").sorted() == before.filter { $0 != "gone.jpg" })
+    #expect(t.links(in: "flat") == [
+        "a.jpg": t.root + "/src/a.jpg",
+        "foreign-live.jpg": t.root + "/other/live.jpg",
+    ])
+    #expect(t.fm.fileExists(atPath: t.root + "/flat/sub/inner.jpg"))
+}
+
+@Test func pruneLeavesLinksIntoOtherFoldersAlone() throws {
+    // Two sources feed one link folder, and one of them is unplugged; the user also keeps a link of their own.
+    let t = try Tree()
+    try t.touch("volA/Photos/a.jpg", "volA/Photos/deleted.jpg", "volB/Pics/trip/z.NEF")
+    _ = try t.run("volA/Photos", "flat")
+    _ = try t.run("volB/Pics", "flat")
+    try t.fm.createSymbolicLink(atPath: t.root + "/flat/mine.jpg", withDestinationPath: "/Volumes/NotMounted/mine.jpg")
+    try t.fm.moveItem(atPath: t.root + "/volB", toPath: t.root + "/volB.unplugged")
+    try t.fm.removeItem(atPath: t.root + "/volA/Photos/deleted.jpg")
+
+    let (summary, events) = try t.run("volA/Photos", "flat") { $0.prune = true }
+    #expect(summary.pruned == 1 && summary.kept == 1 && events == [.prune("deleted.jpg")])
+    #expect(t.links(in: "flat") == [
+        "a.jpg": t.root + "/volA/Photos/a.jpg",
+        "trip__z.NEF": t.root + "/volB/Pics/trip/z.NEF",
+        "mine.jpg": "/Volumes/NotMounted/mine.jpg",
+    ])
+}
+
+@Test func pruneDoesNotMistakeASimilarlyNamedFolderForTheSource() throws {
+    let t = try Tree()
+    try t.touch("photos/a.jpg", "photos-old/b.jpg")
+    _ = try t.run("photos", "flat")
+    _ = try t.run("photos-old", "flat")
+    try t.fm.removeItem(atPath: t.root + "/photos-old")
+    let (summary, events) = try t.run("photos", "flat") { $0.prune = true }
+    #expect(summary.pruned == 0 && events.isEmpty)
+    #expect(t.links(in: "flat")["b.jpg"] == t.root + "/photos-old/b.jpg")
+}
+
+@Test func pruneKeepsLinksWhoseOriginalCannotBeReached() throws {
+    let t = try Tree()
+    try t.touch("src/open/a.jpg", "src/locked/b.jpg")
+    _ = try t.run()
+    let locked = t.root + "/src/locked"
+    try t.fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked)
+    defer { try? t.fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked) }
+
+    let (summary, events) = try t.run { $0.prune = true }
+    #expect(summary.pruned == 0 && summary.kept == 1 && summary.failed == 1)
+    #expect(events.count == 1 && events.contains { if case .unreadable(locked, _) = $0 { true } else { false } })
+    #expect(Set(t.links(in: "flat").keys) == ["open__a.jpg", "locked__b.jpg"])
+}
+
+@Test func pruneRefusesWhenTheSourceHasNoImages() throws {
+    // An unplugged drive can leave its mount point behind as an empty folder.
+    let t = try Tree()
+    try t.touch("vol/Photos/2026/a.CR3", "vol/Photos/b.jpg")
+    _ = try t.run("vol/Photos", "flat")
+    try t.touch("flat/b.jpg.dop")
+    try t.fm.moveItem(atPath: t.root + "/vol", toPath: t.root + "/vol.unplugged")
+    try t.fm.createDirectory(atPath: t.root + "/vol/Photos", withIntermediateDirectories: true)
+    let before = try t.fm.contentsOfDirectory(atPath: t.root + "/flat").sorted()
+
+    for dryRun in [true, false] {
+        #expect(throws: FlattenError.pruneFoundNoImages(t.root + "/vol/Photos")) {
+            try t.run("vol/Photos", "flat") { $0.prune = true; $0.dryRun = dryRun }
+        }
+        #expect(try t.fm.contentsOfDirectory(atPath: t.root + "/flat").sorted() == before)
+    }
+    // Without --prune an empty source is not an error, and changes nothing.
+    let (summary, events) = try t.run("vol/Photos", "flat")
+    #expect(summary == FlattenSummary(dest: t.root + "/flat") && events.isEmpty)
+}
+
+// MARK: - Names and paths
+
+@Test func imagesWithTheSameLinkNameAreReportedNotDropped() throws {
+    let t = try Tree()
+    try t.touch("src/a/b/c.jpg", "src/a/b__c.jpg", "src/a__b/c.jpg", "src/a__b__c.jpg", "src/other.jpg")
+    let first = t.root + "/src/a/b/c.jpg"
+    let expected: [FlattenEvent] = [
+        .link("a__b__c.jpg"),
+        .collision(name: "a__b__c.jpg", source: t.root + "/src/a/b__c.jpg", holder: first),
+        .collision(name: "a__b__c.jpg", source: t.root + "/src/a__b/c.jpg", holder: first),
+        .collision(name: "a__b__c.jpg", source: t.root + "/src/a__b__c.jpg", holder: first),
+        .link("other.jpg"),
+    ]
+    let (dry, dryEvents) = try t.run { $0.dryRun = true }
+    let (summary, events) = try t.run()
+    #expect(events == expected && dryEvents == expected)
+    #expect(summary.found == 5 && summary.created == 2 && summary.skipped == 3)
+    #expect(dry == summary)
+    #expect(t.links(in: "flat") == ["a__b__c.jpg": first, "other.jpg": t.root + "/src/other.jpg"])
+}
+
+@Test func theImageALinkAlreadyLeadsToKeepsItWhenARivalAppears() throws {
+    // The link, and the edits saved beside it, must not pass to an image that merely sorts first.
+    let t = try Tree()
+    try t.touch("src/a__b/c.jpg")
+    _ = try t.run()
+    try t.touch("src/a/b__c.jpg", "flat/a__b__c.jpg.dop")
+    let (summary, events) = try t.run()
+    #expect(summary.kept == 1 && summary.skipped == 1 && summary.created == 0)
+    #expect(events == [.collision(name: "a__b__c.jpg", source: t.root + "/src/a/b__c.jpg", holder: t.root + "/src/a__b/c.jpg")])
+    #expect(t.links(in: "flat") == ["a__b__c.jpg": t.root + "/src/a__b/c.jpg"])
+}
+
+@Test func namesThatDifferOnlyInCaseCollideWhereTheLinkFolderIgnoresCase() throws {
+    let t = try Tree()
+    try t.touch("src/x/img.jpg", "src/x__IMG.JPG")
+    let (summary, events) = try t.run()
+    if Volume(of: t.root).caseSensitive {
+        #expect(summary.created == 2 && events == [.link("x__IMG.JPG"), .link("x__img.jpg")])
+    } else {
+        #expect(summary.created == 1 && summary.skipped == 1)
+        #expect(events == [
+            .link("x__img.jpg"),
+            .collision(name: "x__IMG.JPG", source: t.root + "/src/x__IMG.JPG", holder: t.root + "/src/x/img.jpg"),
+        ])
+        let (again, _) = try t.run { $0.prune = true }
+        #expect(again.kept == 1 && again.skipped == 1 && again.pruned == 0)
+    }
+}
+
+/// A path deep enough that the joined link name exceeds NAME_MAX (255 bytes).
+@Test func linkNameLongerThan255BytesIsReportedAsFailedNotDropped() throws {
+    let t = try Tree()
+    let folder = String(repeating: "x", count: 100)
+    try t.touch("src/\(folder)/\(folder)/\(folder)/IMG_0001.CR3", "src/ok.jpg")
+    let name = [folder, folder, folder, "IMG_0001.CR3"].joined(separator: linkSeparator)
+    #expect(name.utf8.count > 255)
+
+    let (dry, dryEvents) = try t.run { $0.dryRun = true }
+    let (summary, events) = try t.run()
+    #expect(summary.created == 1 && summary.failed == 1, "summary: \(summary)")
+    #expect(events.contains(.link("ok.jpg")))
+    #expect(events.contains { if case .failed(name, _) = $0 { true } else { false } })
+    #expect(Array(t.links(in: "flat").keys) == ["ok.jpg"])
+    #expect(dry == summary && dryEvents == events)
+}
+
+/// Destination (and source) addressed through a symlinked path; destination inside the source
+/// holding a real image (for example a PhotoLab export written beside the links).
+@Test func symlinkedPathsAndRealImagesInADestInsideTheSource() throws {
+    let t = try Tree()
+    try t.touch("src/a/one.jpg", "src/_flat/one_DxO.jpg", "realflat/keep.txt")
+    try t.fm.createSymbolicLink(atPath: t.root + "/flatalias", withDestinationPath: t.root + "/realflat")
+    try t.fm.createSymbolicLink(atPath: t.root + "/srcalias", withDestinationPath: t.root + "/src")
+
+    // dest through a symlink: links land in the real folder, the alias stays a symlink
+    let (first, _) = try t.run("src", "flatalias")
+    #expect(first.dest == t.root + "/realflat")
+    #expect(try t.fm.destinationOfSymbolicLink(atPath: t.root + "/flatalias") == t.root + "/realflat")
+    #expect(t.links(in: "realflat")["a__one.jpg"] == t.root + "/src/a/one.jpg")
+
+    // same tree through aliases on both sides: recognised as the same links
+    let (second, events) = try t.run("srcalias", "flatalias")
+    #expect(second.created == 0 && second.skipped == 0, "summary: \(second), events: \(events)")
+
+    // source == dest through an alias is still rejected
+    #expect(throws: FlattenError.destIsSource) { try t.run("srcalias", "src") }
+
+    // dest inside the source, reached through the alias: its real image must not be linked
+    let (inside, _) = try t.run("srcalias", "srcalias/_flat")
+    #expect(inside.created == 1)
+    #expect(t.links(in: "src/_flat") == ["a__one.jpg": t.root + "/src/a/one.jpg"])
+}
+
+// MARK: - Incomplete results
+
+@Test func foldersThatCannotBeReadAreReported() throws {
+    let t = try Tree()
+    try t.touch("src/open/a.jpg", "src/locked/b.jpg")
+    let locked = t.root + "/src/locked"
+    try t.fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked)
+    defer { try? t.fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked) }
+
+    let (summary, events) = try t.run()
+    #expect(summary.found == 1 && summary.created == 1 && summary.failed == 1)
+    #expect(events.count == 2 && events.last == .link("open__a.jpg"))
+    #expect(events.contains { if case .unreadable(locked, _) = $0 { true } else { false } })
+}
+
+@Test func aSourceThatCannotBeReadIsReported() throws {
+    let t = try Tree()
+    try t.touch("src/a.jpg")
+    _ = try t.run()
+    let source = t.root + "/src"
+    try t.fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: source)
+    defer { try? t.fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: source) }
+
+    let (summary, events) = try t.run { $0.prune = true }
+    #expect(summary.found == 0 && summary.failed == 1 && summary.pruned == 0)
+    #expect(events.count == 1 && events.contains { if case .unreadable(source, _) = $0 { true } else { false } })
+    #expect(Array(t.links(in: "flat").keys) == ["a.jpg"])
+}
+
+@Test func summaryCountsTheImagesFound() throws {
+    let t = try Tree()
+    try t.touch("src/A.DNG", "src/A.JPG", "src/b.jpg", "src/notes.txt", "flat/b.jpg")
+    let (summary, _) = try t.run { $0.skipPairedJPEGs = true }
+    #expect(summary.found == 2 && summary.paired == 1 && summary.created == 1 && summary.skipped == 1)
+    let (none, events) = try t.run { $0.extensions = ["cr3"] }
+    #expect(none.found == 0 && events.isEmpty)
+}
+
+// MARK: - A dry run foresees what the real run meets
+
+@Test func dryRunMatchesTheRealRun() throws {
+    let t = try Tree()
+    try t.touch(
+        "src/new.jpg", "src/kept.jpg", "src/gone.jpg", "src/day/moved.CR3", "src/a/b.jpg", "src/a__b.jpg",
+        "src/real.jpg", "src/foreign.jpg", "flat/real.jpg", "elsewhere.jpg"
+    )
+    try t.fm.createSymbolicLink(atPath: t.root + "/flat/kept.jpg", withDestinationPath: t.root + "/src/kept.jpg")
+    try t.fm.createSymbolicLink(atPath: t.root + "/flat/gone.jpg", withDestinationPath: t.root + "/src/gone.jpg")
+    try t.fm.createSymbolicLink(atPath: t.root + "/flat/day__moved.CR3", withDestinationPath: t.root + "/before/day/moved.CR3")
+    try t.fm.createSymbolicLink(atPath: t.root + "/flat/foreign.jpg", withDestinationPath: t.root + "/elsewhere.jpg")
+    try t.fm.removeItem(atPath: t.root + "/src/gone.jpg")
+    let before = try t.fm.contentsOfDirectory(atPath: t.root + "/flat").sorted()
+
+    let (dry, dryEvents) = try t.run { $0.dryRun = true; $0.prune = true }
+    #expect(try t.fm.contentsOfDirectory(atPath: t.root + "/flat").sorted() == before)
+    #expect(t.links(in: "flat")["day__moved.CR3"] == t.root + "/before/day/moved.CR3")
+
+    let (summary, events) = try t.run { $0.prune = true }
+    #expect(dry == summary && dryEvents == events)
+    #expect(summary == FlattenSummary(found: 7, created: 2, kept: 1, relinked: 1, skipped: 3, pruned: 1, dest: t.root + "/flat"))
+    #expect(Set(events) == [
+        .link("new.jpg"), .link("a__b.jpg"), .relink("day__moved.CR3"), .prune("gone.jpg"),
+        .skipRealFile("real.jpg"), .skipPointsElsewhere("foreign.jpg"),
+        .collision(name: "a__b.jpg", source: t.root + "/src/a__b.jpg", holder: t.root + "/src/a/b.jpg"),
+    ])
+}
+
+@Test func aDestThatIsNotAFolderIsRejectedBeforeAnythingIsDone() throws {
+    let t = try Tree()
+    try t.touch("src/a.jpg", "file.jpg", "folder/file")
+    try t.fm.createSymbolicLink(atPath: t.root + "/broken", withDestinationPath: t.root + "/nowhere")
+    for dryRun in [true, false] {
+        #expect(throws: FlattenError.destNotFolder(t.root + "/file.jpg")) { try t.run("src", "file.jpg") { $0.dryRun = dryRun } }
+        #expect(throws: FlattenError.destNotFolder(t.root + "/folder/file")) {
+            try t.run("src", "folder/file/flat") { $0.dryRun = dryRun }
+        }
+        #expect(throws: FlattenError.destNotFolder(t.root + "/broken")) { try t.run("src", "broken") { $0.dryRun = dryRun } }
+    }
+    #expect(try t.fm.destinationOfSymbolicLink(atPath: t.root + "/broken") == t.root + "/nowhere")
+}
+
+@Test func aDestThatCannotBeWrittenToIsRejectedUnlessThereIsNothingToWrite() throws {
+    let t = try Tree()
+    try t.touch("src/a.jpg")
+    _ = try t.run()
+    let flat = t.root + "/flat", parent = t.root + "/readonly"
+    try t.fm.createDirectory(atPath: parent, withIntermediateDirectories: true)
+    try t.fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: flat)
+    try t.fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: parent)
+    defer {
+        try? t.fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: flat)
+        try? t.fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent)
+    }
+
+    // Every link is in place: a link folder that can only be read is fine.
+    let (summary, _) = try t.run()
+    #expect(summary.kept == 1 && summary.failed == 0)
+
+    try t.touch("src/b.jpg")
+    for dryRun in [true, false] {
+        #expect(throws: FlattenError.destNotWritable(flat)) { try t.run { $0.dryRun = dryRun } }
+        #expect(throws: FlattenError.destNotWritable(parent + "/flat")) { try t.run("src", "readonly/flat") { $0.dryRun = dryRun } }
+    }
+    #expect(Array(t.links(in: "flat").keys) == ["a.jpg"])
+}
+
+// MARK: - Promises
+
+@Test func theSourceAndEveryFileInTheLinkFolderAreLeftAsTheyWere() throws {
+    let t = try Tree()
+    let files = [
+        "src/a.jpg": "original", "src/day/b.CR3": "raw", "src/day/b.CR3.dop": "edits beside the original",
+        "src/gone.jpg": "deleted below", "flat/a.jpg.dop": "edits", "flat/export.jpg": "an export", "flat/day__b.CR3": "in the way",
+    ]
+    for (path, content) in files {
+        try t.touch(path)
+        try Data(content.utf8).write(to: URL(fileURLWithPath: t.root + "/" + path))
+    }
+    func snapshot(_ folder: String) throws -> [String: Data] {
+        let paths = try t.fm.subpathsOfDirectory(atPath: t.root + "/" + folder)
+        return Dictionary(uniqueKeysWithValues: paths.compactMap { path in
+            let full = t.root + "/" + folder + "/" + path
+            guard (try? t.fm.destinationOfSymbolicLink(atPath: full)) == nil else { return nil }
+            return (path, t.fm.contents(atPath: full) ?? Data())
+        })
+    }
+    let (source, flat) = (try snapshot("src"), try snapshot("flat"))
+
+    _ = try t.run()
+    try t.fm.removeItem(atPath: t.root + "/src/gone.jpg")
+    let (summary, _) = try t.run { $0.prune = true }
+    #expect(summary.kept == 1 && summary.pruned == 1 && summary.skipped == 1)
+
+    #expect(try snapshot("src") == source.filter { $0.key != "gone.jpg" })
+    #expect(try snapshot("flat") == flat)
+    #expect(Array(t.links(in: "flat").keys) == ["a.jpg"])
+}
+
+@Test func theFormatsLinkedByDefault() throws {
+    // README and --help promise "JPEG, TIFF, HEIC, PNG and 24 RAW formats".
+    #expect(ImageTypes.raw.count == 24)
+    #expect(ImageTypes.all == [
+        "jpg", "jpeg", "jpe", "tif", "tiff", "heic", "heif", "png",
+        "dng", "arw", "srf", "sr2", "cr2", "cr3", "crw", "nef", "nrw", "orf", "raf", "rw2",
+        "rwl", "pef", "srw", "3fr", "fff", "iiq", "erf", "mef", "mos", "mrw", "x3f", "gpr",
+    ])
+    #expect(FlattenOptions(source: "a", dest: "b").extensions == ImageTypes.all)
+
+    let t = try Tree()
+    for ext in ImageTypes.all { try t.touch("src/IMG." + ext.uppercased()) }
+    try t.touch("src/IMG.dop", "src/IMG.txt", "src/IMG.xmp", "src/IMG.mov")
+    let (summary, _) = try t.run()
+    #expect(summary.found == 32 && summary.created == 32)
+}
+
+@Test func eventsComeInTheOrderOfTheSourcePaths() throws {
+    let t = try Tree()
+    try t.touch("src/b/1.jpg", "src/a/2.jpg", "src/c.jpg", "src/a/1.jpg", "src/B.jpg")
+    let (_, events) = try t.run()
+    #expect(events == [.link("B.jpg"), .link("a__1.jpg"), .link("a__2.jpg"), .link("b__1.jpg"), .link("c.jpg")])
+
+    for name in ["c.jpg", "a/1.jpg", "b/1.jpg"] { try t.fm.removeItem(atPath: t.root + "/src/" + name) }
+    let (_, pruned) = try t.run { $0.prune = true }
+    #expect(pruned == [.prune("a__1.jpg"), .prune("b__1.jpg"), .prune("c.jpg")])
+}
+
+@Test func skipsPhotoLibrariesAndFoldersReachedThroughALink() throws {
+    let t = try Tree()
+    try t.touch("src/Photos Library.photoslibrary/originals/0/IMG.HEIC", "src/ok.jpg", "outside/album/far.jpg")
+    try t.fm.createSymbolicLink(atPath: t.root + "/src/album", withDestinationPath: t.root + "/outside/album")
+    let (summary, _) = try t.run()
+    #expect(summary.found == 1 && Array(t.links(in: "flat").keys) == ["ok.jpg"])
+}
+
+@Test func anEmptyPathIsNeverTheCurrentFolder() throws {
+    let t = try Tree()
+    try t.touch("src/a.jpg")
+    #expect(throws: FlattenError.sourceNotFolder("")) { try flatten(FlattenOptions(source: "", dest: t.root + "/flat")) }
+    #expect(throws: FlattenError.destNotFolder("")) { try flatten(FlattenOptions(source: t.root + "/src", dest: "")) }
+}
+
+@Test func canonicalPathTakesRelativePathsFromTheGivenFolder() throws {
+    let t = try Tree()
+    try t.touch("src/a.jpg")
+    #expect(canonicalPath("src", relativeTo: t.root) == t.root + "/src")
+    #expect(canonicalPath("./src/../src/", relativeTo: t.root) == t.root + "/src")
+    #expect(canonicalPath("new/folder", relativeTo: t.root) == t.root + "/new/folder")
+    #expect(canonicalPath("/tmp", relativeTo: t.root) == "/private/tmp")
+    #expect(canonicalPath(".") == canonicalPath(t.fm.currentDirectoryPath))
+}
+
+// MARK: - When a change fails after all
+
+@Test func changesThatFailAreReportedAndCounted() throws {
+    // The plan is made from what is there; by the time it is carried out, something may have changed.
+    let t = try Tree()
+    try t.touch("src/a.jpg", "src/b.jpg", "flat/taken.jpg")
+    let plan = Plan(dest: t.root + "/flat", found: 3, steps: [
+        .link("a.jpg", to: t.root + "/src/a.jpg"),
+        .link("taken.jpg", to: t.root + "/src/b.jpg"),       // a file has appeared under the name
+        .relink("missing/b.jpg", to: t.root + "/src/b.jpg"), // the folder is not there
+        .prune("vanished.jpg"),                              // the link has gone already
+    ])
+    var events: [FlattenEvent] = []
+    let summary = try carryOut(plan, dryRun: false) { events.append($0) }
+
+    #expect(summary == FlattenSummary(found: 3, created: 1, failed: 3, dest: t.root + "/flat"))
+    #expect(events.count == 4 && events[0] == .link("a.jpg"))
+    for (event, name) in zip(events.dropFirst(), ["taken.jpg", "missing/b.jpg", "vanished.jpg"]) {
+        guard case .failed(name, let reason) = event else {
+            Issue.record("expected a failure for \(name), got \(event)")
+            continue
+        }
+        #expect(!reason.isEmpty)
+    }
+    // Nothing was replaced, and no temporary name is left behind.
+    #expect(try t.fm.contentsOfDirectory(atPath: t.root + "/flat").sorted() == ["a.jpg", "taken.jpg"])
+    #expect(t.links(in: "flat") == ["a.jpg": t.root + "/src/a.jpg"])
+}
+
+@Test func pruneNeverRemovesAFolder() throws {
+    let t = try Tree()
+    try t.touch("flat/folder/keep.jpg")
+    var events: [FlattenEvent] = []
+    let summary = try carryOut(Plan(dest: t.root + "/flat", steps: [.prune("folder")]), dryRun: false) { events.append($0) }
+    #expect(summary.pruned == 0 && summary.failed == 1)
+    #expect(t.fm.fileExists(atPath: t.root + "/flat/folder/keep.jpg"))
 }
