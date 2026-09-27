@@ -91,7 +91,8 @@ swift build -c release
 swift test
 ```
 
-Requires Xcode 16 or later. No dependencies.
+Requires Xcode 16 or later. No dependencies. Releases are built, signed and notarized by
+[scripts/release.sh](scripts/release.sh).
 
 ## License
 

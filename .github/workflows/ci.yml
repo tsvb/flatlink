@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build & test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift build -c release
+      - run: swift test
+      - name: Smoke test
+        run: |
+          mkdir -p "$RUNNER_TEMP/s/day" && touch "$RUNNER_TEMP/s/day/A.DNG" "$RUNNER_TEMP/s/day/A.JPG" "$RUNNER_TEMP/s/B.jpg"
+          .build/release/flatlink --skip-paired-jpegs "$RUNNER_TEMP/s" "$RUNNER_TEMP/f" | tail -1
+          test "$(find "$RUNNER_TEMP/f" -type l | wc -l | tr -d ' ')" = 2
