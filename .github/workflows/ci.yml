@@ -8,16 +8,45 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    name: Build & test
-    runs-on: macos-15
+    name: Build & test (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, runner: macos-26 }
+          - { arch: x86_64, runner: macos-26-intel }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - run: swift build -c release
-      - run: swift test
-      - name: Smoke test
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Select the Xcode that releases are built with
         run: |
+          xcode="/Applications/Xcode_$(cat .xcode-version).app/Contents/Developer"
+          test -d "$xcode"
+          echo "DEVELOPER_DIR=$xcode" >> "$GITHUB_ENV"
+      - run: xcodebuild -version && xcrun swift --version
+      - name: Build the universal binary
+        run: xcrun swift build -c release --arch arm64 --arch x86_64 -Xswiftc -warnings-as-errors
+      - run: xcrun swift test
+      - name: Smoke test (runs the ${{ matrix.arch }} half)
+        run: |
+          bin=.build/apple/Products/Release/flatlink
+          lipo "$bin" -verify_arch arm64 x86_64
+          test "$(uname -m)" = "${{ matrix.arch }}"
           mkdir -p "$RUNNER_TEMP/s/day" && touch "$RUNNER_TEMP/s/day/A.DNG" "$RUNNER_TEMP/s/day/A.JPG" "$RUNNER_TEMP/s/B.jpg"
-          .build/release/flatlink --skip-paired-jpegs "$RUNNER_TEMP/s" "$RUNNER_TEMP/f" | tail -1
+          "$bin" --skip-paired-jpegs "$RUNNER_TEMP/s" "$RUNNER_TEMP/f"
           test "$(find "$RUNNER_TEMP/f" -type l | wc -l | tr -d ' ')" = 2
+
+  lint:
+    name: Lint the release script
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: shellcheck scripts/release.sh
