@@ -71,5 +71,6 @@ cat <<EOF
 ✓ $ZIP is signed and notarized. To publish:
   git tag -a v$VERSION -m "flatlink $VERSION" && git push origin v$VERSION
   gh release create v$VERSION "$ZIP" "$ZIP.sha256" --title "flatlink $VERSION" --notes "…"
-  then update url + sha256 in tsvb/homebrew-tap Formula/flatlink.rb
+  then update version + sha256 in tsvb/homebrew-tap Casks/flatlink.rb (a cask, not a formula:
+  an unbottled formula needs current Command Line Tools to install, a cask never does)
 EOF
