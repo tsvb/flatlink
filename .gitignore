@@ -1,0 +1,13 @@
+## Swift Package Manager
+.build/
+.swiftpm/
+
+## macOS
+.DS_Store
+
+## Release artifacts
+dist/
+
+## Signing / notarization secrets — never commit
+*.p8
+*.p12
