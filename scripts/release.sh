@@ -54,13 +54,15 @@ cp LICENSE "$STAGE/"
 echo "▸ sign"
 codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$STAGE/flatlink"
 codesign --verify --strict --verbose=2 "$STAGE/flatlink" 2>&1 | tail -1
-codesign -dv "$STAGE/flatlink" 2>&1 | grep -q 'flags=.*runtime' || fail "hardened runtime flag missing"
+# Match captured output: `cmd | grep -q` fails under pipefail when grep exits early (SIGPIPE).
+sig=$(codesign -dv "$STAGE/flatlink" 2>&1)
+grep -q 'flags=.*runtime' <<<"$sig" || fail "hardened runtime flag missing"
 
 echo "▸ notarize (a bare binary can't be stapled; Gatekeeper checks the ticket online)"
 ditto -c -k --keepParent "$STAGE" "$ZIP"
 out=$(xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1)
-echo "$out" | grep -E '^\s*(id|status):' | sed 's/^ */  /'
-echo "$out" | grep -q 'status: Accepted' || fail "notarization was not accepted; see 'xcrun notarytool log <id> --keychain-profile $NOTARY_PROFILE'"
+grep -E '^\s*(id|status):' <<<"$out" | sed 's/^ */  /'
+grep -q 'status: Accepted' <<<"$out" || fail "notarization was not accepted; see 'xcrun notarytool log <id> --keychain-profile $NOTARY_PROFILE'"
 
 shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
 
