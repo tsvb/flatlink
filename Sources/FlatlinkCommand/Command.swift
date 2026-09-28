@@ -24,7 +24,8 @@ arguments:
 
 options:
   -n, --dry-run          show what would change, change nothing
-  --prune                remove links into SOURCE whose original has been deleted
+  --prune                remove links into SOURCE whose original has been deleted,
+                         and those to JPEGs --skip-paired-jpegs leaves out
   --skip-paired-jpegs    leave out a JPEG when a RAW of the same name is in the
                          same folder (RAW+JPEG shooting), so each shot shows once
   --ext EXT              only link this extension; repeatable (--ext cr3 --ext jpg)
