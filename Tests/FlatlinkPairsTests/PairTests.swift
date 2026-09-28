@@ -103,3 +103,26 @@ private func pair(_ source: String) -> Pair {
     #expect(read.pairs.isEmpty && read.unreadable.isEmpty)
     #expect(try SavedPairs().encoded() == Data("[]".utf8))
 }
+
+// MARK: Choosing another photo folder
+
+@Test func theSuggestedLinkFolderFollowsANewPhotoFolder() {
+    let old = "/nonexistent-\(UUID().uuidString)/Photos"
+    let new = "/nonexistent-\(UUID().uuidString)/Pictures/Photos"
+    #expect(Pair.dest(Pair.suggestedDest(for: old), afterSourceMovedFrom: old, to: new) == Pair.suggestedDest(for: new))
+    #expect(Pair.dest("", afterSourceMovedFrom: "", to: new) == Pair.suggestedDest(for: new))
+}
+
+@Test func aChosenOrUsedLinkFolderStaysWithANewPhotoFolder() throws {
+    let new = "/nonexistent-\(UUID().uuidString)/Photos"
+    // Chosen by the user.
+    #expect(Pair.dest("/Users/me/Links", afterSourceMovedFrom: "/Users/me/Photos", to: new) == "/Users/me/Links")
+    // The suggestion, but links and edits have been made there.
+    let root = NSTemporaryDirectory() + "flatlink-dest-" + UUID().uuidString
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    let old = root + "/Photos"
+    try FileManager.default.createDirectory(atPath: Pair.suggestedDest(for: old), withIntermediateDirectories: true)
+    #expect(Pair.dest(Pair.suggestedDest(for: old), afterSourceMovedFrom: old, to: new) == Pair.suggestedDest(for: old))
+    // Nothing chosen yet.
+    #expect(Pair.dest("/Users/me/Links", afterSourceMovedFrom: old, to: "") == "/Users/me/Links")
+}
