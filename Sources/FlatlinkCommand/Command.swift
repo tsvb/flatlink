@@ -190,7 +190,7 @@ public func run(
     } catch let error as FlattenError {
         switch error {
         case .sourceNotFolder, .destIsSource: return usageError(error.description)
-        case .sourceOnOtherDrive, .destNotFolder, .destNotWritable, .pruneFoundNoImages:
+        case .sourceOnOtherDrive, .destNotFolder, .destNotWritable, .pruneFoundNoImages, .pruneDriveNotMounted:
             err("\(tool): error: \(shown(error.description))")
             return 1
         }

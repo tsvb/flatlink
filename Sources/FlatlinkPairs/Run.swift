@@ -291,6 +291,9 @@ public final class Run {
         case .pruneFoundNoImages:
             return "No photos were found in the photo folder, so nothing was pruned: that is what an unplugged "
                 + "drive looks like. Is the drive connected, and is this the right folder?"
+        case .pruneDriveNotMounted:
+            return "The photo folder's drive isn't connected, so nothing was pruned: what is there now is a folder "
+                + "left on this Mac where the drive was. Connect the drive and update again."
         }
     }
 }
