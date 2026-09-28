@@ -126,3 +126,81 @@ private func eventually(_ timeout: Duration = .seconds(10), _ condition: () -> B
     try await Task.sleep(for: .seconds(1))
     #expect(changes.withLock { $0 } == before)
 }
+
+// MARK: When only a full run can tell
+
+@Test func lostEventsMountsAndAMovedSourceCallForAFullRun() throws {
+    let t = try Tree()
+    try t.touch("src/a.jpg")
+    let changes = OSAllocatedUnfairLock<[SourceChange]>(initialState: [])
+    let watcher = SourceWatcher(FlattenOptions(source: t.root + "/src", dest: t.root + "/flat")) { change in
+        changes.withLock { $0.append(change) }
+    }
+    let src = t.root + "/src"
+    let wholesale = [
+        kFSEventStreamEventFlagMustScanSubDirs,                                          // the system lost count
+        kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagUserDropped,
+        kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagKernelDropped,
+        kFSEventStreamEventFlagRootChanged,                                              // the source moved
+        kFSEventStreamEventFlagMount, kFSEventStreamEventFlagUnmount,                   // a drive below it
+    ]
+    for flag in wholesale {
+        changes.withLock { $0 = [] }
+        // Even among other events, and whatever they are.
+        watcher.received([src + "/b.jpg", src, src + "/notes.txt"], [FSEventStreamEventFlags(created), FSEventStreamEventFlags(flag), 0])
+        #expect(changes.withLock { $0 } == [.everything], "flags \(flag)")
+    }
+
+    // The source coming back, as FSEvents sometimes reports it: a rename of the source itself.
+    changes.withLock { $0 = [] }
+    watcher.received([src], [FSEventStreamEventFlags(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsDir)])
+    #expect(changes.withLock { $0 } == [.everything], "the source renamed back into place")
+    changes.withLock { $0 = [] }
+    watcher.received([src], [FSEventStreamEventFlags(kFSEventStreamEventFlagItemXattrMod | kFSEventStreamEventFlagItemIsDir)])
+    #expect(changes.withLock { $0 }.isEmpty, "a Finder label on the source changes nothing")
+
+    changes.withLock { $0 = [] }
+    watcher.received([src + "/b.jpg", src + "/notes.txt"], [FSEventStreamEventFlags(created), FSEventStreamEventFlags(created)])
+    #expect(changes.withLock { $0 } == [.images([src + "/b.jpg"])])
+    changes.withLock { $0 = [] }
+    watcher.received([src + "/notes.txt"], [FSEventStreamEventFlags(created)])
+    #expect(changes.withLock { $0 }.isEmpty, "nothing a run would act on")
+}
+
+// MARK: Renames
+
+@Test func aRenamedImageIsReportedUnderBothNames() async throws {
+    let t = try Tree()
+    try t.touch("src/day/IMG_0001.CR3")
+    let changes = OSAllocatedUnfairLock<[SourceChange]>(initialState: [])
+    let watcher = SourceWatcher(FlattenOptions(source: t.root + "/src", dest: t.root + "/flat"), latency: 0.1) { change in
+        changes.withLock { $0.append(change) }
+    }
+    try await startSettled(watcher, changes)
+    defer { watcher.stop() }
+
+    try t.fm.moveItem(atPath: t.root + "/src/day/IMG_0001.CR3", toPath: t.root + "/src/day/Iceland 001.CR3")
+    let reported = { changes.withLock { $0 }.flatMap { change -> [String] in if case .images(let paths) = change { paths } else { [] } } }
+    #expect(try await eventually { Set(reported()).isSuperset(of: [t.root + "/src/day/IMG_0001.CR3", t.root + "/src/day/Iceland 001.CR3"]) })
+}
+
+@Test func aFolderHiddenOrUnhiddenIsReported() async throws {
+    // A folder renamed to a hidden name takes its photos out of the links, and back in when it is renamed back.
+    let t = try Tree()
+    try t.touch("src/2026/a.jpg")
+    let changes = OSAllocatedUnfairLock<[SourceChange]>(initialState: [])
+    let watcher = SourceWatcher(FlattenOptions(source: t.root + "/src", dest: t.root + "/flat"), latency: 0.1) { change in
+        changes.withLock { $0.append(change) }
+    }
+    try await startSettled(watcher, changes)
+    defer { watcher.stop() }
+    let reported = { changes.withLock { $0 }.flatMap { change -> [String] in if case .images(let paths) = change { paths } else { [] } } }
+
+    try t.fm.moveItem(atPath: t.root + "/src/2026", toPath: t.root + "/src/.2026")
+    #expect(try await eventually { reported().contains(t.root + "/src/2026") })
+    #expect(!reported().contains { $0.hasPrefix(t.root + "/src/.2026") }, "the hidden name itself is not a change to act on")
+
+    changes.withLock { $0 = [] }
+    try t.fm.moveItem(atPath: t.root + "/src/.2026", toPath: t.root + "/src/2026")
+    #expect(try await eventually { reported().contains(t.root + "/src/2026") })
+}

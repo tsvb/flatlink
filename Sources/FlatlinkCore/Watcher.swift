@@ -85,12 +85,15 @@ public final class SourceWatcher: @unchecked Sendable {
         }
     }
 
-    private func received(_ paths: [String], _ flags: [FSEventStreamEventFlags]) {
+    func received(_ paths: [String], _ flags: [FSEventStreamEventFlags]) {
         let wholesale = kFSEventStreamEventFlagRootChanged | kFSEventStreamEventFlagMustScanSubDirs
             | kFSEventStreamEventFlagMount | kFSEventStreamEventFlagUnmount
+        let naming = kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemRenamed
         var images: [String] = []
         for (path, flag) in zip(paths, flags) {
-            if Int(flag) & wholesale != 0 {
+            // The source itself coming back is sometimes reported as a rename of it, not as RootChanged.
+            // Only its name: a label or permissions set on it change nothing a run would see.
+            if Int(flag) & wholesale != 0 || (path == root && Int(flag) & naming != 0) {
                 onChange(.everything)
                 return
             }
