@@ -6,7 +6,11 @@ import Observation
 /// A photo folder and the flat link folder made from it, with the options it is run with.
 struct Pair: Codable, Identifiable, Hashable {
     var id = UUID()
-    var source = ""
+    var source = "" {
+        didSet { sourceVolume = volumeIdentity(of: source) }
+    }
+    /// The drive the source was chosen on, so that another drive mounted in its place is never taken for it.
+    var sourceVolume: String?
     var dest = ""
     var skipPairedJPEGs = false
     var prune = false
@@ -21,6 +25,7 @@ struct Pair: Codable, Identifiable, Hashable {
         var options = FlattenOptions(source: source, dest: dest)
         options.skipPairedJPEGs = skipPairedJPEGs
         options.prune = prune
+        options.sourceVolume = sourceVolume
         return options
     }
 
@@ -28,6 +33,7 @@ struct Pair: Codable, Identifiable, Hashable {
         self.id = id
         self.source = source
         self.dest = dest
+        sourceVolume = volumeIdentity(of: source)
     }
 
     /// Keys added later may be missing from what an earlier version saved.
@@ -35,6 +41,7 @@ struct Pair: Codable, Identifiable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         source = try c.decode(String.self, forKey: .source)
+        sourceVolume = try c.decodeIfPresent(String.self, forKey: .sourceVolume)
         dest = try c.decode(String.self, forKey: .dest)
         skipPairedJPEGs = try c.decodeIfPresent(Bool.self, forKey: .skipPairedJPEGs) ?? false
         prune = try c.decodeIfPresent(Bool.self, forKey: .prune) ?? false
@@ -75,6 +82,15 @@ final class Library {
     init() {
         let saved = UserDefaults.standard.data(forKey: Self.key)
         pairs = saved.flatMap { try? JSONDecoder().decode([Pair].self, from: $0) } ?? []
+        // A pair saved before its drive was recorded learns it now, if the drive is there.
+        // Saved only then: a launch given its pairs as an argument must never write them over the saved ones.
+        var learned = false
+        for index in pairs.indices where pairs[index].sourceVolume == nil {
+            guard let volume = volumeIdentity(of: pairs[index].source) else { continue }
+            pairs[index].sourceVolume = volume
+            learned = true
+        }
+        if learned { save() }
         for pair in pairs { runs[pair.id] = Run() }
         syncWatchers()
         observeVolumes()
