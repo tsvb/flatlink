@@ -229,6 +229,10 @@ final class Run {
                     // Unplugged while being looked through: wait for it, and keep showing the last result.
                     watch = .waitingForSource
                     if let previous { phase = previous } else { phase = .idle }
+                } else if automatic, case FlattenError.sourceOnOtherDrive = error {
+                    // Another drive where the photos' drive was: wait for the right one, and say why.
+                    watch = .waitingForSource
+                    phase = .failed(Self.message(for: error))
                 } else {
                     phase = .failed(Self.message(for: error))
                 }
@@ -249,6 +253,9 @@ final class Run {
             return path.hasPrefix("/Volumes/")
                 ? "The photo folder isn't there. Is its drive connected?"
                 : "The photo folder isn't there: \(path)"
+        case .sourceOnOtherDrive:
+            return "The photo folder is on a different drive from the one it was chosen on, so nothing was changed. "
+                + "If this is the right drive, choose the photo folder again."
         case .destIsSource:
             return "The link folder must be a different folder from the photos."
         case .destNotFolder(let path):

@@ -18,6 +18,10 @@ public struct FlattenOptions: Equatable, Sendable {
     public var prune = false
     public var extensions: Set<String> = ImageTypes.all
     public var skipPairedJPEGs = false
+    /// The drive the source was chosen on, as `volumeIdentity(of:)` told it. When set, a source on any
+    /// other drive is refused: one mounted where the source's drive was would otherwise pass for it, and
+    /// every link into the missing drive would look like a photo that was deleted.
+    public var sourceVolume: String?
 
     public init(source: String, dest: String) {
         self.source = source
@@ -45,6 +49,7 @@ public enum FlattenEvent: Hashable, Sendable {
 
 public enum FlattenError: Error, Equatable, CustomStringConvertible {
     case sourceNotFolder(String)
+    case sourceOnOtherDrive(String)
     case destIsSource
     case destNotFolder(String)
     case destNotWritable(String)
@@ -53,6 +58,7 @@ public enum FlattenError: Error, Equatable, CustomStringConvertible {
     public var description: String {
         switch self {
         case .sourceNotFolder(let path): "source is not a folder: \(path)"
+        case .sourceOnOtherDrive(let path): "source is not on the drive it was chosen on: \(path)"
         case .destIsSource: "dest must differ from source"
         case .destNotFolder(let path): "dest can't be used, this is not a folder: \(path)"
         case .destNotWritable(let path): "dest can't be written to: \(path)"
@@ -117,6 +123,9 @@ public func plan(_ options: FlattenOptions, progress: (ScanProgress) -> Void = {
     var isDir: ObjCBool = false
     guard fm.fileExists(atPath: root, isDirectory: &isDir), isDir.boolValue else {
         throw FlattenError.sourceNotFolder(root)
+    }
+    if let expected = options.sourceVolume, volumeIdentity(of: root) != expected {
+        throw FlattenError.sourceOnOtherDrive(root)
     }
     guard dest != root else { throw FlattenError.destIsSource }
 
@@ -294,6 +303,16 @@ struct Volume {
         let stored = name.decomposedStringWithCanonicalMapping
         return countsUTF16 ? stored.utf16.count : stored.utf8.count
     }
+}
+
+/// The drive that holds `path`, told apart from any other drive that may be mounted in the same place.
+/// Nil for the startup drive, which nothing can take the place of, and for a drive with no UUID.
+public func volumeIdentity(of path: String) -> String? {
+    let keys: Set<URLResourceKey> = [.volumeIsRootFileSystemKey, .volumeUUIDStringKey]
+    guard let values = try? URL(fileURLWithPath: path).resourceValues(forKeys: keys),
+          values.volumeIsRootFileSystem == false
+    else { return nil }
+    return values.volumeUUIDString
 }
 
 /// Whether the file a link points at is gone. Any failure other than "no such file" — no permission,

@@ -358,6 +358,60 @@ final class Tree {
     #expect(summary == FlattenSummary(dest: t.root + "/flat") && events.isEmpty)
 }
 
+/// Runs hdiutil, which makes and mounts the disk images that stand in for drives here.
+func hdiutil(_ arguments: String...) throws -> Int32 {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
+    return process.terminationStatus
+}
+
+@Test func aSourceOnAnotherDriveMountedInItsPlaceIsRefused() throws {
+    // Two drives of the same name mount at the same place, one at a time.
+    let t = try Tree()
+    let mount = t.root + "/Volumes/Photos"
+    try t.fm.createDirectory(atPath: mount, withIntermediateDirectories: true)
+    for drive in ["mine", "other"] {
+        #expect(try hdiutil("create", "-quiet", "-size", "2m", "-fs", "APFS", "-volname", "Photos", t.root + "/\(drive).dmg") == 0)
+    }
+    func attach(_ drive: String) throws {
+        try #require(try hdiutil("attach", "-quiet", "-nobrowse", "-mountpoint", mount, t.root + "/\(drive).dmg") == 0)
+    }
+    func detach() { _ = try? hdiutil("detach", "-quiet", "-force", mount) }
+    defer { detach(); withExtendedLifetime(t) {} }
+
+    try attach("mine")
+    try t.touch("Volumes/Photos/2026/a.jpg", "Volumes/Photos/b.jpg")
+    let mine = try #require(volumeIdentity(of: mount))
+    #expect(volumeIdentity(of: t.root) == nil) // the startup drive, which nothing can take the place of
+    func run(on drive: String? = mine, dryRun: Bool = false) throws -> (FlattenSummary, [FlattenEvent]) {
+        try t.run("Volumes/Photos", "flat") { $0.sourceVolume = drive; $0.prune = true; $0.dryRun = dryRun }
+    }
+    #expect(try run().0.created == 2)
+    let links = t.links(in: "flat")
+    detach()
+
+    // The other drive holds a photo, so it doesn't look like an empty mount point. Taken for the
+    // source's drive, it would lose every link into the drive that isn't there.
+    try attach("other")
+    try t.touch("Volumes/Photos/c.jpg")
+    #expect(try run(on: nil, dryRun: true).0.pruned == 2)
+    for dryRun in [true, false] {
+        #expect(throws: FlattenError.sourceOnOtherDrive(mount)) { try run(dryRun: dryRun) }
+    }
+    detach()
+    // Nor is the mount point left behind, a folder on the startup drive.
+    #expect(throws: FlattenError.sourceOnOtherDrive(mount)) { try run() }
+    #expect(t.links(in: "flat") == links)
+
+    try attach("mine")
+    let (summary, events) = try run()
+    #expect(summary.kept == 2 && summary.pruned == 0 && events.isEmpty)
+}
+
 // MARK: - Names and paths
 
 @Test func imagesWithTheSameLinkNameAreReportedNotDropped() throws {
