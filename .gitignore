@@ -11,3 +11,6 @@ dist/
 ## Signing / notarization secrets — never commit
 *.p8
 *.p12
+
+## The app's Xcode project is generated from App/project.yml
+App/*.xcodeproj/

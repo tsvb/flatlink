@@ -1,0 +1,55 @@
+# The flatlink app: a window onto FlatlinkCore, the same code the command runs.
+#
+#   cd App && xcodegen generate && open Flatlink.xcodeproj
+#
+# The .xcodeproj is generated and not committed; this file is the source of truth.
+name: Flatlink
+
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Manual
+  configs:
+    Debug:
+      ENABLE_HARDENED_RUNTIME: NO
+      CODE_SIGN_IDENTITY: "-"
+    # Developer ID + hardened runtime + secure timestamp, as notarization requires.
+    Release:
+      ENABLE_HARDENED_RUNTIME: YES
+      CODE_SIGN_IDENTITY: "Developer ID Application"
+      OTHER_CODE_SIGN_FLAGS: "--timestamp"
+
+packages:
+  flatlink:
+    path: ..
+
+targets:
+  Flatlink:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/Flatlink
+      - path: Resources
+    dependencies:
+      - package: flatlink
+        product: FlatlinkCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tsvb.Flatlink
+        PRODUCT_NAME: Flatlink
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Flatlink
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+        INFOPLIST_KEY_NSHumanReadableCopyright: "MIT License. Not affiliated with DxO."
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Not sandboxed, on purpose: the app reads whole photo trees and checks where every link leads,
+        # which a sandbox would only allow folder by folder. It ships like the command, Developer ID signed.
+        ENABLE_APP_SANDBOX: NO
+        SWIFT_STRICT_CONCURRENCY: complete

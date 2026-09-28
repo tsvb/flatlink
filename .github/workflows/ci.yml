@@ -57,6 +57,44 @@ jobs:
             test "$(find "$f" -type l | wc -l | tr -d ' ')" = 2
           done
 
+  app:
+    name: Build the app
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Select the Xcode that releases are built with
+        run: |
+          xcode="/Applications/Xcode_$(cat .xcode-version).app/Contents/Developer"
+          test -d "$xcode"
+          echo "DEVELOPER_DIR=$xcode" >> "$GITHUB_ENV"
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      # The .xcodeproj is generated and not committed; there is nothing to build until this runs.
+      - name: Generate the project
+        working-directory: App
+        run: xcodegen generate
+      # Release, as it ships, but unsigned: CI holds no Developer ID.
+      - name: Build (Release, arm64 + x86_64)
+        working-directory: App
+        run: |
+          set -o pipefail
+          xcodebuild -project Flatlink.xcodeproj -scheme Flatlink -configuration Release \
+                     -destination 'generic/platform=macOS' -derivedDataPath "$RUNNER_TEMP/app" \
+                     ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+                     CODE_SIGNING_ALLOWED=NO build
+      - name: Check the bundle, and that it starts
+        run: |
+          app="$RUNNER_TEMP/app/Build/Products/Release/Flatlink.app"
+          archs=$(lipo -archs "$app/Contents/MacOS/Flatlink")
+          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "::error::not universal: $archs"; exit 1; }
+          test -f "$app/Contents/Resources/AppIcon.icns"
+          "$app/Contents/MacOS/Flatlink" &
+          pid=$!
+          sleep 5
+          kill -0 "$pid" || { echo "::error::the app quit within 5 seconds of starting"; exit 1; }
+          kill "$pid"
+
   lint:
     name: Lint the release script
     runs-on: ubuntu-24.04

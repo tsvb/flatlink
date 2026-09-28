@@ -75,7 +75,7 @@ public func flatten(_ options: FlattenOptions, report: (FlattenEvent) -> Void = 
 }
 
 /// What a run does about one image or one link.
-enum Step {
+enum Step: Sendable {
     case keep
     case link(String, to: String)
     case relink(String, to: String)
@@ -84,14 +84,28 @@ enum Step {
     case fail(FlattenEvent)
 }
 
-struct Plan {
-    var dest: String
-    var found = 0, paired = 0
+/// Everything a run will do. Carry it out with `carryOut(_:dryRun:report:)`: a dry run to see it, and then
+/// the same plan for real, so that what is shown is what is done.
+public struct FlattenPlan: Sendable {
+    public var dest: String
+    /// Images that want a link, and JPEGs left out because a RAW of the same name is beside them.
+    public var found = 0, paired = 0
     var steps: [Step] = []
 }
 
+/// How far the walk through the source has got.
+public struct ScanProgress: Equatable, Sendable {
+    /// Files and folders seen so far.
+    public var items: Int
+    /// The folder the walk is in.
+    public var folder: String
+}
+
 /// Decides everything a run will do, changing nothing, so a dry run and a real run can't disagree.
-func plan(_ options: FlattenOptions) throws -> Plan {
+///
+/// `progress` is called now and then while the source is walked. Inside a task that is cancelled, this
+/// throws `CancellationError`.
+public func plan(_ options: FlattenOptions, progress: (ScanProgress) -> Void = { _ in }) throws -> FlattenPlan {
     let fm = FileManager.default
     // An empty path would mean the current folder.
     guard !options.source.isEmpty else { throw FlattenError.sourceNotFolder("") }
@@ -115,8 +129,8 @@ func plan(_ options: FlattenOptions) throws -> Plan {
     guard isDir.boolValue else { throw FlattenError.destNotFolder(anchor) }
     let volume = Volume(of: anchor)
 
-    let scan = scanImages(root: root, dest: dest, options: options)
-    var plan = Plan(dest: dest, found: scan.images.count, paired: scan.paired)
+    let scan = try scanImages(root: root, dest: dest, options: options, progress: progress)
+    var plan = FlattenPlan(dest: dest, found: scan.images.count, paired: scan.paired)
     plan.steps = scan.unreadable.map { .fail(.unreadable($0.path, $0.message)) }
 
     // Images that share a link name, in the order of the first of them.
@@ -135,6 +149,7 @@ func plan(_ options: FlattenOptions) throws -> Plan {
     }
 
     for rivals in rivalries {
+        try Task.checkCancellation()
         // The link belongs to the image it already leads to, or else to the first one.
         var holder = rivals[0]
         let link = dest + "/" + holder.name
@@ -202,7 +217,9 @@ func plan(_ options: FlattenOptions) throws -> Plan {
     return plan
 }
 
-func carryOut(_ plan: Plan, dryRun: Bool, report: (FlattenEvent) -> Void) throws -> FlattenSummary {
+/// Makes the changes in `plan`, or with `dryRun` only reports them. A change that fails is reported as
+/// `.failed` and counted; the rest go ahead.
+public func carryOut(_ plan: FlattenPlan, dryRun: Bool, report: (FlattenEvent) -> Void = { _ in }) throws -> FlattenSummary {
     let fm = FileManager.default
     if !dryRun {
         try fm.createDirectory(atPath: plan.dest, withIntermediateDirectories: true)
@@ -310,7 +327,9 @@ struct Scan {
     var unreadable: [(path: String, message: String)] = []
 }
 
-func scanImages(root: String, dest: String, options: FlattenOptions) -> Scan {
+func scanImages(
+    root: String, dest: String, options: FlattenOptions, progress: (ScanProgress) -> Void = { _ in }
+) throws -> Scan {
     var scan = Scan()
     let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey]
     // Recursive on purpose — the opposite of PhotoLab's SkipsSubdirectoryDescendants — but, like
@@ -330,7 +349,13 @@ func scanImages(root: String, dest: String, options: FlattenOptions) -> Scan {
     }
 
     var filesByFolder: [String: [String]] = [:]
+    var seen = 0
     for case let url as URL in walker {
+        seen += 1
+        if seen % 256 == 0 {
+            try Task.checkCancellation()
+            progress(ScanProgress(items: seen, folder: url.deletingLastPathComponent().path))
+        }
         let values: URLResourceValues
         do { values = try url.resourceValues(forKeys: Set(keys)) } catch {
             scan.unreadable.append((url.path, error.localizedDescription))
