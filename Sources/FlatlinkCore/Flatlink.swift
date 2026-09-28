@@ -52,6 +52,7 @@ public enum FlattenEvent: Hashable, Sendable {
 public enum FlattenError: Error, Equatable, CustomStringConvertible {
     case sourceNotFolder(String)
     case sourceOnOtherDrive(String)
+    case sourceIsStartupDrive
     case destIsSource
     case destNotFolder(String)
     case destNotWritable(String)
@@ -62,6 +63,7 @@ public enum FlattenError: Error, Equatable, CustomStringConvertible {
         switch self {
         case .sourceNotFolder(let path): "source is not a folder: \(path)"
         case .sourceOnOtherDrive(let path): "source is not on the drive it was chosen on: \(path)"
+        case .sourceIsStartupDrive: "source can't be /, the whole startup drive; choose the folder that holds your photos"
         case .destIsSource: "dest must differ from source"
         case .destNotFolder(let path): "dest can't be used, this is not a folder: \(path)"
         case .destNotWritable(let path): "dest can't be written to: \(path)"
@@ -134,6 +136,8 @@ public func plan(_ options: FlattenOptions, progress: (ScanProgress) -> Void = {
         throw FlattenError.sourceOnOtherDrive(root)
     }
     guard dest != root else { throw FlattenError.destIsSource }
+    // Every file on the Mac, the system included: never what was meant.
+    guard root != "/" else { throw FlattenError.sourceIsStartupDrive }
     // Before the walk: nothing is to be decided from what is only a stand-in for the drive.
     if options.prune, let mount = unmountedDrive(holding: root, volumes: canonicalPath(options.volumesFolder)) {
         throw FlattenError.pruneDriveNotMounted(mount)
@@ -158,7 +162,7 @@ public func plan(_ options: FlattenOptions, progress: (ScanProgress) -> Void = {
     var rivalries: [[Image]] = []
     var wanted: [String: Int] = [:]
     for src in scan.images {
-        let relative = String(src.dropFirst(root.count + 1))
+        let relative = relativePath(src, below: root)
         let name = relative.split(separator: "/").joined(separator: linkSeparator)
         if let known = wanted[volume.key(name)] {
             rivalries[known].append((name, src, relative))
@@ -176,7 +180,7 @@ public func plan(_ options: FlattenOptions, progress: (ScanProgress) -> Void = {
         let step: Step
 
         if let target = try? fm.destinationOfSymbolicLink(atPath: link) {
-            if let owner = rivals.first(where: { target == $0.src || isSameFile(link, $0.src) }) {
+            if let owner = rivals.first(where: { sameBytes(target, $0.src) || isSameFile(link, $0.src) }) {
                 holder = owner
                 step = .keep
             } else if targetIsGone(link),
@@ -200,7 +204,9 @@ public func plan(_ options: FlattenOptions, progress: (ScanProgress) -> Void = {
         }
 
         plan.steps.append(step)
-        for rival in rivals where rival.src != holder.src {
+        // By bytes: two names that differ only in how an accent is written compare equal as Strings,
+        // and one of them would go unreported. Only a network drive can hold both.
+        for rival in rivals where !sameBytes(rival.src, holder.src) {
             plan.steps.append(.skip(.collision(name: rival.name, source: rival.src, holder: holder.src)))
         }
     }
@@ -248,6 +254,7 @@ public func carryOut(_ plan: FlattenPlan, dryRun: Bool, report: (FlattenEvent) -
     let fm = FileManager.default
     if !dryRun {
         try fm.createDirectory(atPath: plan.dest, withIntermediateDirectories: true)
+        removeLeftoverLinks(in: plan.dest)
     }
     var summary = FlattenSummary(found: plan.found, paired: plan.paired, dest: plan.dest)
 
@@ -273,14 +280,13 @@ public func carryOut(_ plan: FlattenPlan, dryRun: Bool, report: (FlattenEvent) -
             }
         case .relink(let name, let src, let old):
             change(name, .relink(name), \.relinked) {
-                try checkUnchanged(plan.dest + "/" + name, leadsTo: old)
-                try replaceLink(at: plan.dest + "/" + name, target: src)
+                try replaceLink(at: plan.dest + "/" + name, leadingTo: old, with: src)
             }
         case .prune(let name, let old):
             change(name, .prune(name), \.pruned) {
-                try checkUnchanged(plan.dest + "/" + name, leadsTo: old)
+                let aside = try takeAside(plan.dest + "/" + name, leadingTo: old)
                 // unlink, not removeItem: it can never remove a folder.
-                guard unlink(plan.dest + "/" + name) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                guard unlink(aside) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             }
         case .skip(let event):
             report(event)
@@ -373,23 +379,87 @@ struct ChangedSincePlanned: LocalizedError {
     }
 }
 
-/// Throws unless `link` is still a symlink leading to `target`, so that a plan made a while ago never
-/// replaces or removes anything but the link it was made for.
-func checkUnchanged(_ link: String, leadsTo target: String) throws {
-    guard (try? FileManager.default.destinationOfSymbolicLink(atPath: link)) == target else {
+/// The prefix of the names a run uses for a moment in the link folder: hidden, so PhotoLab never shows them.
+let asidePrefix = ".flatlink-"
+
+/// A name beside `link` for it to be moved to for a moment.
+func asideName(for link: String) -> String {
+    (link as NSString).deletingLastPathComponent + "/" + asidePrefix + UUID().uuidString
+}
+
+/// Moves the link at `link` out of the way in one step, and returns where it went, if it is still the
+/// link to `target` that a plan was made from. Anything else found there — a file saved in its place
+/// since, another link — is put back and never removed or replaced. Moving first and looking after
+/// leaves no moment in which something new could take the name and be lost.
+func takeAside(_ link: String, leadingTo target: String) throws -> String {
+    let aside = asideName(for: link)
+    guard rename(link, aside) == 0 else {
+        throw errno == ENOENT ? ChangedSincePlanned() : POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    guard (try? FileManager.default.destinationOfSymbolicLink(atPath: aside)) == target else {
+        try putBack(aside, at: link)
         throw ChangedSincePlanned()
+    }
+    return aside
+}
+
+/// Puts what `takeAside` moved back in its place, unless something else has taken the name meanwhile:
+/// then it stays where it is, and the error says where.
+func putBack(_ aside: String, at link: String) throws {
+    guard renamex_np(aside, link, UInt32(RENAME_EXCL)) == 0 else {
+        throw LeftAside(path: aside)
     }
 }
 
-/// Points an existing link at `target` in one step, so a failure never leaves the name without a link.
-func replaceLink(at link: String, target: String) throws {
-    let temp = (link as NSString).deletingLastPathComponent + "/.flatlink-" + UUID().uuidString
-    try FileManager.default.createSymbolicLink(atPath: temp, withDestinationPath: target)
-    guard rename(temp, link) == 0 else {
-        let code = POSIXErrorCode(rawValue: errno) ?? .EIO
-        unlink(temp)
-        throw POSIXError(code)
+/// Points the link at `link`, which leads to `old`, at `target` instead, keeping its name.
+func replaceLink(at link: String, leadingTo old: String, with target: String) throws {
+    let fresh = asideName(for: link)
+    try FileManager.default.createSymbolicLink(atPath: fresh, withDestinationPath: target)
+    let aside: String
+    do {
+        aside = try takeAside(link, leadingTo: old)
+    } catch {
+        unlink(fresh)
+        throw error
     }
+    // RENAME_EXCL: whatever took the name in the moment since, it is not replaced.
+    guard renamex_np(fresh, link, UInt32(RENAME_EXCL)) == 0 else {
+        let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+        unlink(fresh)
+        try? putBack(aside, at: link)
+        throw code == .EEXIST ? ChangedSincePlanned() : POSIXError(code)
+    }
+    unlink(aside)
+}
+
+/// Removes the links a run that was stopped part way (a crash, a power cut) left under a hidden name.
+/// Only links: anything else under such a name was moved aside from where a link was, and is kept.
+func removeLeftoverLinks(in dest: String) {
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: dest)) ?? []
+    for name in names where name.hasPrefix(asidePrefix) {
+        let path = dest + "/" + name
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil { unlink(path) }
+    }
+}
+
+/// Something that took the place of a link was moved aside and couldn't be put back, because the name
+/// was taken again meanwhile.
+struct LeftAside: LocalizedError {
+    var path: String
+    var errorDescription: String? {
+        "something was saved where this link was while it was being changed; it was kept, as \(path)"
+    }
+}
+
+/// The same characters, written the same way. Swift's `==` also takes an accent written as one
+/// character for the same accent written as two.
+func sameBytes(_ a: String, _ b: String) -> Bool {
+    a.utf8.elementsEqual(b.utf8)
+}
+
+/// `path` below `root`, without the slash between them.
+func relativePath(_ path: String, below root: String) -> String {
+    String(path.dropFirst(root == "/" ? 1 : root.count + 1))
 }
 
 struct Scan {

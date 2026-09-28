@@ -129,7 +129,7 @@ Every photo that is left out is named on stderr, with the reason:
 | --- | --- |
 | `0` | Every image under the source has its link. |
 | `1` | Some images don't, no image was found, a link could not be removed or the link folder can't be used. Each is named on stderr. |
-| `64` | Usage error, a source that is not a folder, or a destination that is the source. |
+| `64` | Usage error, a source that is not a folder or is `/`, or a destination that is the source. |
 
 ### Undo
 

@@ -129,7 +129,7 @@ func extensionsThatCannotBeOnesAreRejected(value: String) {
     let mistakes: [[String]] = [
         [], ["photos"], ["photos", "flat", "more"], ["--bogus", "photos", "flat"], ["photos", "flat", "--ext"],
         ["--ext", "cr3,", "photos", "flat"], ["photos", ""], ["", "flat"], ["missing", "flat"], ["photos", "photos"],
-        ["photos/a.jpg", "flat"],
+        ["photos/a.jpg", "flat"], ["/", "flat"],
     ]
     for arguments in mistakes {
         var err: [String] = []
