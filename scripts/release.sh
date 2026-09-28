@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Build, sign, notarize, package and tag a flatlink release.
+# Build, sign, notarize, package and tag a flatlink release: the command and the app.
 #
-#   scripts/release.sh 0.1.0
+#   scripts/release.sh 1.1.0
 #
-# Produces dist/flatlink-<version>-macos.zip (a universal, Developer ID signed and
-# notarized binary plus LICENSE) and its .sha256, and tags the commit it was built
-# from as v<version>. Publishing — pushing the tag, the GitHub release and the
-# Homebrew cask — is printed at the end, not done here.
+# Produces, each with its .sha256:
+#   dist/flatlink-<version>-macos.zip      the command: a universal, Developer ID signed and
+#                                          notarized binary plus LICENSE
+#   dist/flatlink-app-<version>-macos.zip  Flatlink.app, universal, signed, notarized and stapled
+# and tags the commit they were built from as v<version>. Publishing — pushing the tag, the
+# GitHub release and the Homebrew casks — is printed at the end, not done here.
 #
 # Environment:
 #   DEVELOPER_DIR    Xcode to build with (default: /Applications/Xcode.app — never a beta).
@@ -26,6 +28,9 @@ fail() { echo "✗ $*" >&2; exit 1; }
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "version must be X.Y.Z, got '$VERSION'"
 grep -q "^let version = \"$VERSION\"$" Sources/flatlink/main.swift \
   || fail "Sources/flatlink/main.swift does not say version $VERSION"
+grep -q "^        MARKETING_VERSION: \"$VERSION\"$" App/project.yml \
+  || fail "App/project.yml does not say MARKETING_VERSION $VERSION"
+command -v xcodegen >/dev/null || fail "XcodeGen is needed to build the app: brew install xcodegen"
 xcode=$(xcodebuild -version)
 [[ "${xcode%%$'\n'*}" == "Xcode $(<.xcode-version)" ]] \
   || fail "building with ${xcode%%$'\n'*}, but .xcode-version says $(<.xcode-version)"
@@ -72,6 +77,22 @@ step build xcrun swift build -c release --arch arm64 --arch x86_64 --scratch-pat
 BIN="$(xcrun swift build -c release --arch arm64 --arch x86_64 --scratch-path "$WORK/build" --show-bin-path)/flatlink"
 [[ "$(lipo -archs "$BIN")" == *arm64* && "$(lipo -archs "$BIN")" == *x86_64* ]] || fail "binary is not universal"
 
+echo "▸ build the app (arm64 + x86_64)"
+# Unsigned here, and signed below like the command, with the one identity and the same checks.
+(cd App && xcodegen generate --quiet) || fail "xcodegen failed"
+step app-build xcodebuild -project App/Flatlink.xcodeproj -scheme Flatlink -configuration Release \
+  -destination 'generic/platform=macOS' -derivedDataPath "$WORK/app" \
+  ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES CODE_SIGNING_ALLOWED=NO build
+APP="$WORK/stage/Flatlink.app"
+mkdir -p "$WORK/stage"
+ditto "$WORK/app/Build/Products/Release/Flatlink.app" "$APP"
+archs=$(lipo -archs "$APP/Contents/MacOS/Flatlink")
+[[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || fail "the app is not universal: $archs"
+[[ "$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$APP/Contents/Info.plist")" == "$VERSION" ]] \
+  || fail "the app's Info.plist does not say version $VERSION"
+# One signature covers the bundle only while there is nothing nested in it to sign first.
+[[ ! -e "$APP/Contents/Frameworks" && ! -e "$APP/Contents/PlugIns" ]] || fail "the app embeds code; sign it too"
+
 STAGE="dist/flatlink-$VERSION"
 NAME="flatlink-$VERSION-macos.zip"
 ZIP="dist/$NAME"
@@ -98,21 +119,60 @@ for half in arm64 x86_64; do
   [[ "$(wc -l <<<"$links" | tr -d ' ')" == 2 ]] || fail "$half: expected 2 links, got: $links"
 done
 
-echo "▸ notarize (a bare binary can't be stapled; Gatekeeper checks the ticket online)"
+echo "▸ sign the app"
+codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
+step app-verify codesign --verify --deep --strict --verbose=2 "$APP"
+sig=$(codesign -dv "$APP" 2>&1)
+grep -q 'flags=.*runtime' <<<"$sig" || fail "the app: hardened runtime flag missing"
+
+echo "▸ try the signed app"
+# It opens its window for a moment. -pairs gives it an empty list for this launch only (the
+# argument domain), so it never watches or updates the folders saved on this Mac.
+"$APP/Contents/MacOS/Flatlink" -pairs '<5b5d>' >"$WORK/app-run.log" 2>&1 &
+pid=$!
+sleep 4
+kill -0 "$pid" 2>/dev/null || { cat "$WORK/app-run.log" >&2; fail "the signed app quit within 4 seconds of starting"; }
+kill "$pid"
+
+# Submits a zip for notarization, and fails unless it is accepted.
+notarize() {
+  local out
+  out=$(xcrun notarytool submit "$1" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1) \
+    || { echo "$out" >&2; fail "notarytool failed"; }
+  grep -E '^\s*(id|status):' <<<"$out" | sed 's/^ */  /'
+  grep -q 'status: Accepted' <<<"$out" \
+    || { echo "$out" >&2; fail "notarization was not accepted; see 'xcrun notarytool log <id> --keychain-profile $NOTARY_PROFILE'"; }
+}
+
+# From inside dist/, so that `shasum -c` works on the two files wherever they are downloaded to.
+checksum() {
+  (cd dist && shasum -a 256 "$1" | tee "$1.sha256") >&2
+  local sha
+  sha=$(<"dist/$1.sha256")
+  echo "${sha%% *}"
+}
+
+echo "▸ notarize the command (a bare binary can't be stapled; Gatekeeper checks the ticket online)"
 # Zipped under another name until it is accepted, so dist/ never holds a release that isn't one.
 # No resource forks or extended attributes: they would unzip as ._ files.
 ditto -c -k --norsrc --noextattr --keepParent "$STAGE" "$WORK/$NAME"
-out=$(xcrun notarytool submit "$WORK/$NAME" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1) \
-  || { echo "$out" >&2; fail "notarytool failed"; }
-grep -E '^\s*(id|status):' <<<"$out" | sed 's/^ */  /'
-grep -q 'status: Accepted' <<<"$out" \
-  || { echo "$out" >&2; fail "notarization was not accepted; see 'xcrun notarytool log <id> --keychain-profile $NOTARY_PROFILE'"; }
+notarize "$WORK/$NAME"
 mv "$WORK/$NAME" "$ZIP"
+SHA=$(checksum "$NAME")
 
-# From inside dist/, so that `shasum -c` works on the two files wherever they are downloaded to.
-(cd dist && shasum -a 256 "$NAME" | tee "$NAME.sha256")
-SHA=$(<"$ZIP.sha256")
-SHA=${SHA%% *}
+echo "▸ notarize and staple the app"
+ditto -c -k --norsrc --noextattr --keepParent "$APP" "$WORK/app-submit.zip"
+notarize "$WORK/app-submit.zip"
+step staple xcrun stapler staple "$APP"
+step staple-validate xcrun stapler validate "$APP"
+gatekeeper=$(spctl --assess --type execute -vv "$APP" 2>&1) || { echo "$gatekeeper" >&2; fail "Gatekeeper rejects the app"; }
+grep -q 'source=Notarized Developer ID' <<<"$gatekeeper" || { echo "$gatekeeper" >&2; fail "the app is not seen as notarized"; }
+APP_NAME="flatlink-app-$VERSION-macos.zip"
+APP_ZIP="dist/$APP_NAME"
+rm -f "$APP_ZIP" "$APP_ZIP.sha256"
+# The stapled app, zipped only now that it is one.
+ditto -c -k --norsrc --noextattr --keepParent "$APP" "$APP_ZIP"
+APP_SHA=$(checksum "$APP_NAME")
 
 [[ "$(git rev-parse HEAD)" == "$COMMIT" && -z "$(git status --porcelain)" ]] \
   || fail "the repository changed during the build; v$VERSION was not tagged"
@@ -120,11 +180,11 @@ git tag -a "v$VERSION" -m "flatlink $VERSION" "$COMMIT"
 
 cat <<EOF2
 
-✓ $ZIP is signed and notarized, and ${COMMIT:0:7} is tagged v$VERSION. To publish:
+✓ $ZIP and $APP_ZIP are signed and notarized, and ${COMMIT:0:7} is tagged v$VERSION. To publish:
   git push origin v$VERSION
-  gh release create v$VERSION "$ZIP" "$ZIP.sha256" --title "flatlink $VERSION" --notes "…"
-  then in tsvb/homebrew-tap Casks/flatlink.rb (a cask, not a formula: an unbottled formula
-  needs current Command Line Tools to install, a cask never does) set
-    version "$VERSION"
-    sha256 "$SHA"
+  gh release create v$VERSION "$ZIP" "$ZIP.sha256" "$APP_ZIP" "$APP_ZIP.sha256" --title "flatlink $VERSION" --notes "…"
+  then in tsvb/homebrew-tap (casks, not formulae: an unbottled formula needs current Command
+  Line Tools to install, a cask never does) set version "$VERSION" and
+    Casks/flatlink.rb      sha256 "$SHA"
+    Casks/flatlink-app.rb  sha256 "$APP_SHA"
 EOF2

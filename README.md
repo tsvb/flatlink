@@ -35,12 +35,24 @@ symlinks inside the folder you point it at, and that folder itself if it isn't t
 
 ## Install
 
+The command:
+
 ```bash
 brew install tsvb/tap/flatlink
 ```
 
-A single universal binary (Apple silicon and Intel), signed and notarized, for macOS 14 or later.
-No Python or other runtime needed. macOS only: there is no Windows or Linux version.
+The app, which does the same from a window and can update the links by itself after each import
+(see [the app](#the-app)):
+
+```bash
+brew install --cask tsvb/tap/flatlink-app
+```
+
+Or download `flatlink-app-…-macos.zip` from the [latest release](https://github.com/tsvb/flatlink/releases/latest)
+and move Flatlink.app to Applications.
+
+Both are universal (Apple silicon and Intel), signed and notarized, for macOS 14 or later. No
+Python or other runtime needed. macOS only: there is no Windows or Linux version.
 
 ## Use
 
@@ -193,7 +205,7 @@ under Rosetta, on Intel.
 
 ## The app
 
-A small Mac app in [App/](App) puts a window on the same code: keep a list of photo folders and their
+Flatlink.app ([install](#install); source in [App/](App)) puts a window on the same code: keep a list of photo folders and their
 link folders, preview what would change, update with one click, and open the result in PhotoLab.
 
 With **Update automatically** on, it watches the photo folder and updates the links a few seconds
