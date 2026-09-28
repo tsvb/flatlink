@@ -706,8 +706,8 @@ func hdiutil(_ arguments: String...) throws -> Int32 {
     let plan = FlattenPlan(dest: t.root + "/flat", found: 3, steps: [
         .link("a.jpg", to: t.root + "/src/a.jpg"),
         .link("taken.jpg", to: t.root + "/src/b.jpg"),       // a file has appeared under the name
-        .relink("missing/b.jpg", to: t.root + "/src/b.jpg"), // the folder is not there
-        .prune("vanished.jpg"),                              // the link has gone already
+        .relink("missing/b.jpg", to: t.root + "/src/b.jpg", from: t.root + "/old/b.jpg"), // the folder is not there
+        .prune("vanished.jpg", from: t.root + "/src/vanished.jpg"),                       // the link has gone already
     ])
     var events: [FlattenEvent] = []
     let summary = try carryOut(plan, dryRun: false) { events.append($0) }
@@ -730,12 +730,44 @@ func hdiutil(_ arguments: String...) throws -> Int32 {
     let t = try Tree()
     try t.touch("flat/folder/keep.jpg")
     var events: [FlattenEvent] = []
-    let summary = try carryOut(FlattenPlan(dest: t.root + "/flat", steps: [.prune("folder")]), dryRun: false) { events.append($0) }
+    let summary = try carryOut(FlattenPlan(dest: t.root + "/flat", steps: [.prune("folder", from: t.root + "/folder")]), dryRun: false) { events.append($0) }
     #expect(summary.pruned == 0 && summary.failed == 1)
     #expect(t.fm.fileExists(atPath: t.root + "/flat/folder/keep.jpg"))
 }
 
 // MARK: - Planning first, for an app
+
+@Test func aPlanNeverReplacesOrRemovesWhatWasPutInPlaceOfItsLinksSince() throws {
+    // A preview in the app can be carried out long after it was made.
+    let t = try Tree()
+    try t.touch("src/day/moved.jpg")
+    let fm = t.fm
+    try fm.createDirectory(atPath: t.root + "/flat", withIntermediateDirectories: true)
+    for name in ["day__moved.jpg", "gone.jpg", "repointed.jpg"] {
+        try fm.createSymbolicLink(atPath: t.root + "/flat/" + name, withDestinationPath: t.root + "/src/" + name)
+    }
+    var options = FlattenOptions(source: t.root + "/src", dest: t.root + "/flat")
+    options.prune = true
+    let made = try plan(options)
+    var shown: [FlattenEvent] = []
+    _ = try carryOut(made, dryRun: true) { shown.append($0) }
+    #expect(shown == [.relink("day__moved.jpg"), .prune("gone.jpg"), .prune("repointed.jpg")])
+
+    // Since the preview: real files took the places of two links, and one link was pointed elsewhere.
+    for name in ["day__moved.jpg", "gone.jpg", "repointed.jpg"] { try fm.removeItem(atPath: t.root + "/flat/" + name) }
+    #expect(fm.createFile(atPath: t.root + "/flat/day__moved.jpg", contents: Data("mine".utf8)))
+    #expect(fm.createFile(atPath: t.root + "/flat/gone.jpg", contents: Data("mine".utf8)))
+    try fm.createSymbolicLink(atPath: t.root + "/flat/repointed.jpg", withDestinationPath: t.root + "/elsewhere.jpg")
+
+    var done: [FlattenEvent] = []
+    let summary = try carryOut(made, dryRun: false) { done.append($0) }
+    #expect(summary.relinked == 0 && summary.pruned == 0 && summary.failed == 3)
+    #expect(done.map { if case .failed(let name, _) = $0 { name } else { "" } } == ["day__moved.jpg", "gone.jpg", "repointed.jpg"])
+    #expect(fm.contents(atPath: t.root + "/flat/day__moved.jpg") == Data("mine".utf8))
+    #expect(fm.contents(atPath: t.root + "/flat/gone.jpg") == Data("mine".utf8))
+    #expect(t.links(in: "flat") == ["repointed.jpg": t.root + "/elsewhere.jpg"])
+    #expect(try fm.contentsOfDirectory(atPath: t.root + "/flat").sorted() == ["day__moved.jpg", "gone.jpg", "repointed.jpg"])
+}
 
 @Test func aPlanCarriedOutDoesWhatItsDryRunShowed() throws {
     let t = try Tree()

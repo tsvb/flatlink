@@ -108,6 +108,25 @@ func parseExtensions(_ value: String) throws -> [String] {
     return extensions
 }
 
+/// A file name or message made safe to print. A name can hold any character but `/`, and one from
+/// someone else's folder could otherwise move the cursor, recolour or clear the terminal, or break a line
+/// to pass for output of its own: control characters are shown escaped, like `\u{1B}`, and so are the
+/// ones that reverse the direction of the text that follows them.
+func shown(_ text: String) -> String {
+    var result = ""
+    for scalar in text.unicodeScalars {
+        switch scalar {
+        case "\n": result += "\\n"
+        case "\r": result += "\\r"
+        case "\t": result += "\\t"
+        case _ where scalar.properties.generalCategory == .control || scalar.properties.isBidiControl:
+            result += "\\u{" + String(scalar.value, radix: 16, uppercase: true) + "}"
+        default: result.unicodeScalars.append(scalar)
+        }
+    }
+    return result
+}
+
 /// Runs the tool and returns its exit status.
 public func run(
     _ arguments: [String],
@@ -117,7 +136,7 @@ public func run(
     err: (String) -> Void = { FileHandle.standardError.write(Data("\($0)\n".utf8)) }
 ) -> Int32 {
     func usageError(_ message: String) -> Int32 {
-        err("\(tool): error: \(message)\nRun '\(tool) --help' for usage.")
+        err("\(tool): error: \(shown(message))\nRun '\(tool) --help' for usage.")
         return 64
     }
 
@@ -141,20 +160,20 @@ public func run(
     do {
         let summary = try flatten(options) { event in
             switch event {
-            case .link(let name): out("link  \(name)")
-            case .relink(let name): out("relink \(name)")
-            case .prune(let name): out("prune \(name)")
-            case .skipPointsElsewhere(let name): err("skip (link exists, points elsewhere): \(name)")
-            case .skipRealFile(let name): err("skip (real file in the way): \(name)")
+            case .link(let name): out("link  \(shown(name))")
+            case .relink(let name): out("relink \(shown(name))")
+            case .prune(let name): out("prune \(shown(name))")
+            case .skipPointsElsewhere(let name): err("skip (link exists, points elsewhere): \(shown(name))")
+            case .skipRealFile(let name): err("skip (real file in the way): \(shown(name))")
             case .collision(let name, let source, let holder):
-                err("skip (link name \(name) belongs to \(holder)): \(source)")
-            case .unreadable(let path, let message): err("unreadable: \(path): \(message)")
-            case .failed(let name, let message): err("failed: \(name): \(message)")
+                err("skip (link name \(shown(name)) belongs to \(shown(holder))): \(shown(source))")
+            case .unreadable(let path, let message): err("unreadable: \(shown(path)): \(shown(message))")
+            case .failed(let name, let message): err("failed: \(shown(name)): \(shown(message))")
             }
         }
         if summary.found == 0 {
             let formats = extensions.isEmpty ? "images" : "." + extensions.joined(separator: ", .") + " files"
-            err("\(tool): no \(formats) found under \(options.source)")
+            err("\(tool): no \(formats) found under \(shown(options.source))")
         }
         let (created, pruned, relinked) = options.dryRun
             ? ("would create", "would prune", "would relink")
@@ -163,7 +182,7 @@ public func run(
         if summary.relinked > 0 { line += ", \(relinked) \(summary.relinked)" }
         if options.skipPairedJPEGs { line += ", left out \(summary.paired) paired JPEGs" }
         if summary.failed > 0 { line += ", failed \(summary.failed)" }
-        out("\(line)  ->  \(summary.dest)")
+        out("\(line)  ->  \(shown(summary.dest))")
         if options.dryRun { out("dry run: nothing was changed") }
         // Success means the link folder shows every image under the source.
         return summary.failed > 0 || summary.skipped > 0 || summary.found == 0 ? 1 : 0
@@ -171,11 +190,11 @@ public func run(
         switch error {
         case .sourceNotFolder, .destIsSource: return usageError(error.description)
         case .sourceOnOtherDrive, .destNotFolder, .destNotWritable, .pruneFoundNoImages:
-            err("\(tool): error: \(error.description)")
+            err("\(tool): error: \(shown(error.description))")
             return 1
         }
     } catch {
-        err("\(tool): \(error.localizedDescription)")
+        err("\(tool): \(shown(error.localizedDescription))")
         return 1
     }
 }
