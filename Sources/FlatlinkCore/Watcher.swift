@@ -85,7 +85,7 @@ public final class SourceWatcher: @unchecked Sendable {
         }
     }
 
-    private func received(_ paths: [String], _ flags: [FSEventStreamEventFlags]) {
+    func received(_ paths: [String], _ flags: [FSEventStreamEventFlags]) {
         let wholesale = kFSEventStreamEventFlagRootChanged | kFSEventStreamEventFlagMustScanSubDirs
             | kFSEventStreamEventFlagMount | kFSEventStreamEventFlagUnmount
         var images: [String] = []
