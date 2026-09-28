@@ -191,6 +191,30 @@ built, signed, notarized and tagged by [scripts/release.sh](scripts/release.sh),
 in [.xcode-version](.xcode-version); CI builds and tests with the same one, on Apple silicon and on
 Intel.
 
+## The app
+
+A small Mac app in [App/](App) puts a window on the same code: keep a list of photo folders and their
+link folders, preview what would change, update with one click, and open the result in PhotoLab.
+
+With **Update automatically** on, it watches the photo folder and updates the links a few seconds
+after an import has finished: new photos are linked, and with pruning on, deleted ones unlinked.
+It catches up when it starts, when the switch is turned on and when the drive is plugged back in,
+and it keeps watching with its window closed, for as long as it runs. Turn on **Open Flatlink at
+login** in its Settings (⌘,) to have it start hidden when you log in and keep watching after a
+restart; it is listed, and can be switched off, in System Settings › General › Login Items. Only images or folders
+coming, going or being renamed count, so the files Capture One or PhotoLab write don't set it off.
+
+```bash
+cd App && xcodegen generate && open Flatlink.xcodeproj
+```
+
+The Xcode project is generated from [App/project.yml](App/project.yml) by
+[XcodeGen](https://github.com/yonaskolb/XcodeGen) and not committed. The app is not sandboxed, for
+the same reason the command isn't: it reads whole photo trees and checks where every link leads.
+The icon is drawn by [App/scripts/make-icon.swift](App/scripts/make-icon.swift), and
+[App/scripts/open-as-login-item.swift](App/scripts/open-as-login-item.swift) opens a build the way
+macOS does at login, to try that without logging out.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
