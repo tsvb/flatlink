@@ -66,6 +66,15 @@ public struct Pair: Codable, Identifiable, Hashable, Sendable {
         return (base as NSString).appendingPathComponent("PhotoLab-All")
     }
 
+    /// The link folder to keep when the source changes from `old` to `new`: the suggestion for the new
+    /// source, while the link folder is still only the suggestion for the old one and nothing has been
+    /// made there. One the user chose, or one that holds links and edits, stays.
+    public static func dest(_ dest: String, afterSourceMovedFrom old: String, to new: String) -> String {
+        guard !new.isEmpty else { return dest }
+        let unused = dest.isEmpty || (dest == suggestedDest(for: old) && !FileManager.default.fileExists(atPath: dest))
+        return unused ? suggestedDest(for: new) : dest
+    }
+
     private static func isTopOfDrive(_ path: String, parent: String) -> Bool {
         // Asked of the path first, so that a drive that isn't mounted just now is known too.
         if parent == "/" || parent == "/Volumes" { return true }

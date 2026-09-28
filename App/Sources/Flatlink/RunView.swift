@@ -57,7 +57,8 @@ struct OutcomeView: View {
         VStack(alignment: .leading, spacing: 18) {
             headline
 
-            HStack(spacing: 10) {
+            // Wraps at the narrowest window rather than cutting labels short.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10, alignment: .leading)], alignment: .leading, spacing: 10) {
                 Stat(value: outcome.linked.count, label: outcome.applied ? "linked" : "to link", highlight: !outcome.linked.isEmpty)
                 Stat(value: outcome.summary.kept, label: "already linked")
                 if !outcome.relinked.isEmpty {
@@ -108,7 +109,7 @@ struct OutcomeView: View {
         } else if outcome.applied && outcome.linked.isEmpty && outcome.relinked.isEmpty && outcome.pruned.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Nothing new to link").font(.title3.weight(.semibold))
-                Text("\(outcome.issues.count == 1 ? "One photo still needs" : "\(outcome.issues.count) photos still need") attention. Checked at \(time).")
+                Text("\(outcome.issues.count == 1 ? "One item still needs" : "\(outcome.issues.count) items still need") attention. Checked at \(time).")
                     .foregroundStyle(.secondary)
             }
         } else if outcome.applied {
@@ -152,7 +153,7 @@ private struct Stat: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value.formatted())
-                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                .font(.system(.title, design: .rounded, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(warning ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
             Text(label)
@@ -162,7 +163,7 @@ private struct Stat: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .frame(minWidth: 96, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
         .overlay(alignment: .leading) {
             if highlight {

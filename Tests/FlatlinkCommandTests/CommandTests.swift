@@ -148,7 +148,7 @@ func extensionsThatCannotBeOnesAreRejected(value: String) {
     #expect(first.status == 0 && first.err.isEmpty)
     #expect(first.out == [
         "link  2026__day__A.CR3", "link  b.jpg",
-        "\ncreated 2, kept 0, skipped 0, pruned 0, left out 1 paired JPEGs  ->  \(box.root)/flat",
+        "\ncreated 2, kept 0, skipped 0, pruned 0, left out 1 paired JPEG  ->  \(box.root)/flat",
     ])
     #expect(box.links(in: "flat") == ["2026__day__A.CR3", "b.jpg"])
 

@@ -19,15 +19,27 @@ struct ContentView: View {
                         }
                 }
             }
+            .onDeleteCommand {
+                if let selection { remove(selection) }
+            }
             .overlay {
                 if library.pairs.isEmpty {
                     Text("No folders yet").foregroundStyle(.tertiary)
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                Button(action: add) {
-                    Label("Add Photo Folder", systemImage: "plus")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                HStack {
+                    Button(action: add) {
+                        Label("Add Photo Folder", systemImage: "plus")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Button {
+                        if let selection { remove(selection) }
+                    } label: {
+                        Label("Remove from List", systemImage: "minus").labelStyle(.iconOnly)
+                    }
+                    .disabled(selection == nil)
+                    .help("Remove the selected folder from the list (⌫). Its links and edits stay on disk.")
                 }
                 .buttonStyle(.borderless)
                 .padding(12)
@@ -84,33 +96,45 @@ struct PairRow: View {
             }
             Spacer(minLength: 4)
             if pair.watched != nil {
+                let watching = run?.watch == .waitingForSource ? "Waiting for the photo folder" : "Updates automatically"
                 Image(systemName: run?.watch == .waitingForSource ? "eye.slash" : "eye")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
-                    .help(run?.watch == .waitingForSource ? "Waiting for the photo folder" : "Updates automatically")
+                    .help(watching)
+                    .accessibilityLabel(watching)
             }
             status
         }
         .padding(.vertical, 3)
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder private var status: some View {
         switch run?.phase {
         case .scanning:
             ProgressView().controlSize(.small)
+                .accessibilityLabel("Updating")
         case .failed:
             Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+                .help("The last update failed")
+                .accessibilityLabel("The last update failed")
         case .finished(let outcome) where !outcome.issues.isEmpty:
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                .help("Needs attention")
+                .accessibilityLabel("Needs attention")
         case .finished(let outcome) where outcome.pending > 0:
+            let changes = "\(outcome.pending.formatted()) \(outcome.pending == 1 ? "change" : "changes") to make"
             Text(outcome.pending.formatted())
                 .font(.caption.weight(.semibold).monospacedDigit())
                 .foregroundStyle(Color.prussianDeep)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 1)
                 .background(Color.marigold, in: .capsule)
+                .help("Previewed: \(changes)")
+                .accessibilityLabel(changes)
         case .finished(let outcome) where outcome.applied:
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                .accessibilityLabel("Up to date")
         default:
             EmptyView()
         }

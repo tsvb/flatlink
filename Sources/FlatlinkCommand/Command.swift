@@ -18,6 +18,9 @@ Links left broken by moving or renaming SOURCE are pointed at the new place.
 Nothing is written anywhere but DEST, and only symlinks are ever created or
 removed there.
 
+PhotoLab saves your edits (.dop files) in DEST, beside the links: keep DEST,
+and re-run into the same one after each import.
+
 arguments:
   SOURCE                 folder tree containing images
   DEST                   flat folder to fill with symlinks (created if missing)
@@ -181,7 +184,7 @@ public func run(
             : ("created", "pruned", "relinked")
         var line = "\n\(created) \(summary.created), kept \(summary.kept), skipped \(summary.skipped), \(pruned) \(summary.pruned)"
         if summary.relinked > 0 { line += ", \(relinked) \(summary.relinked)" }
-        if options.skipPairedJPEGs { line += ", left out \(summary.paired) paired JPEGs" }
+        if options.skipPairedJPEGs { line += ", left out \(summary.paired) paired JPEG\(summary.paired == 1 ? "" : "s")" }
         if summary.failed > 0 { line += ", failed \(summary.failed)" }
         out("\(line)  ->  \(shown(summary.dest))")
         if options.dryRun { out("dry run: nothing was changed") }

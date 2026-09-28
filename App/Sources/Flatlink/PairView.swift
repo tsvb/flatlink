@@ -37,8 +37,8 @@ struct PairView: View {
         }
         // Anything shown was worked out for the folders and options as they were.
         .onChange(of: pair) { run.reset() }
-        .onChange(of: pair.source) {
-            if pair.dest.isEmpty, !pair.source.isEmpty { pair.dest = Pair.suggestedDest(for: pair.source) }
+        .onChange(of: pair.source) { old, new in
+            pair.dest = Pair.dest(pair.dest, afterSourceMovedFrom: old, to: new)
         }
     }
 
@@ -60,14 +60,6 @@ struct PairView: View {
                         Text(watchStatus)
                             .font(.caption)
                             .foregroundStyle(run.watch == .waitingForSource ? Color.marigold : Color.paleBlue.opacity(0.85))
-                        // Watching only lasts as long as the app runs; offer the way to keep it going.
-                        if run.watch != .off, !loginItem.isOn {
-                            Button("Open at login to keep watching after a restart") { loginItem.set(true) }
-                                .buttonStyle(.plain)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(Color.marigold)
-                                .help("Flatlink opens with its window closed when you log in. Change this in Settings (⌘,).")
-                        }
                     }
                     // A fixed width, so that the switch stays put while the status beside it changes.
                     .frame(width: 290, alignment: .leading)
@@ -92,6 +84,16 @@ struct PairView: View {
                 }
             }
             .disabled(!pair.isReady)
+            // Watching only lasts as long as the app runs; offer the way to keep it going. Kept out of the
+            // switch's label, where VoiceOver would read it as part of the switch and not reach the button.
+            if run.watch != .off, !loginItem.isOn {
+                Button("Open at login to keep watching after a restart") { loginItem.set(true) }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.marigold)
+                    .help("Flatlink opens with its window closed when you log in. Change this in Settings (⌘,).")
+                    .padding(.top, -10)
+            }
         }
         .padding(20)
         .background(.card, in: .rect(cornerRadius: 16))
