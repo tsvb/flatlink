@@ -22,6 +22,8 @@ public struct FlattenOptions: Equatable, Sendable {
     /// other drive is refused: one mounted where the source's drive was would otherwise pass for it, and
     /// every link into the missing drive would look like a photo that was deleted.
     public var sourceVolume: String?
+    /// Where drives are mounted; only tests change it.
+    var volumesFolder = "/Volumes"
 
     public init(source: String, dest: String) {
         self.source = source
@@ -54,6 +56,7 @@ public enum FlattenError: Error, Equatable, CustomStringConvertible {
     case destNotFolder(String)
     case destNotWritable(String)
     case pruneFoundNoImages(String)
+    case pruneDriveNotMounted(String)
 
     public var description: String {
         switch self {
@@ -65,6 +68,9 @@ public enum FlattenError: Error, Equatable, CustomStringConvertible {
         case .pruneFoundNoImages(let path):
             "no images found under \(path), so --prune would remove every link into it; nothing was removed. "
                 + "Is the drive connected, and is this the right folder?"
+        case .pruneDriveNotMounted(let path):
+            "no drive is mounted at \(path), so --prune would remove every link into it; nothing was removed. "
+                + "Is the drive connected?"
         }
     }
 }
@@ -128,6 +134,10 @@ public func plan(_ options: FlattenOptions, progress: (ScanProgress) -> Void = {
         throw FlattenError.sourceOnOtherDrive(root)
     }
     guard dest != root else { throw FlattenError.destIsSource }
+    // Before the walk: nothing is to be decided from what is only a stand-in for the drive.
+    if options.prune, let mount = unmountedDrive(holding: root, volumes: canonicalPath(options.volumesFolder)) {
+        throw FlattenError.pruneDriveNotMounted(mount)
+    }
 
     // The folder that decides what dest can hold: dest, or while it is missing the nearest one above it.
     var anchor = dest
@@ -318,6 +328,20 @@ public func volumeIdentity(of path: String) -> String? {
           values.volumeIsRootFileSystem == false
     else { return nil }
     return values.volumeUUIDString
+}
+
+/// The drive's mount point, when `path` is below a folder where drives are mounted but not on a drive
+/// mounted there: a folder left on the startup drive where an unplugged drive was, which something may
+/// have written to. Its images are not the drive's, and pruning from it would lose every link into the
+/// drive. `sourceVolume` catches this too, but only where the drive was recorded, which the command
+/// can't do.
+func unmountedDrive(holding path: String, volumes: String) -> String? {
+    guard path.hasPrefix(volumes + "/") else { return nil }
+    let name = path.dropFirst(volumes.count + 1).prefix { $0 != "/" }
+    let mount = volumes + "/" + name
+    guard let volume = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.volumeURLKey]).volume else { return nil }
+    let volumePath = canonicalPath(volume.path)
+    return volumePath == mount || volumePath.hasPrefix(mount + "/") ? nil : mount
 }
 
 /// Whether the file a link points at is gone. Any failure other than "no such file" — no permission,

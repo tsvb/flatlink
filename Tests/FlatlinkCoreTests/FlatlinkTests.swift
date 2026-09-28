@@ -448,6 +448,54 @@ func hdiutil(_ arguments: String...) throws -> Int32 {
     #expect(summary.kept == 2 && summary.pruned == 0 && events.isEmpty)
 }
 
+@Test func pruneRefusesAFolderLeftWhereAnUnpluggedDriveWas() throws {
+    // The command can't record the drive, so a folder with photos in it where the drive is mounted,
+    // written to while the drive was out, must not pass for the drive.
+    let t = try Tree()
+    let mount = t.root + "/Volumes/Photos"
+    try t.fm.createDirectory(atPath: mount, withIntermediateDirectories: true)
+    #expect(try hdiutil("create", "-quiet", "-size", "2m", "-fs", "APFS", "-volname", "Photos", t.root + "/photos.dmg") == 0)
+    func attach() throws {
+        try #require(try hdiutil("attach", "-quiet", "-nobrowse", "-mountpoint", mount, t.root + "/photos.dmg") == 0)
+    }
+    func detach() { _ = try? hdiutil("detach", "-quiet", "-force", mount) }
+    defer { detach(); withExtendedLifetime(t) {} }
+    func run(prune: Bool = true, dryRun: Bool = false) throws -> (FlattenSummary, [FlattenEvent]) {
+        try t.run("Volumes/Photos/Library", "flat") {
+            $0.volumesFolder = t.root + "/Volumes"; $0.prune = prune; $0.dryRun = dryRun
+        }
+    }
+
+    try attach()
+    try t.touch("Volumes/Photos/Library/2026/a.jpg", "Volumes/Photos/Library/b.jpg")
+    #expect(try run().0.created == 2)
+    let links = t.links(in: "flat")
+    detach()
+
+    try t.touch("Volumes/Photos/Library/stray.jpg")
+    #expect(unmountedDrive(holding: t.root + "/Volumes/Photos/Library", volumes: t.root + "/Volumes") == mount)
+    for dryRun in [true, false] {
+        #expect(throws: FlattenError.pruneDriveNotMounted(mount)) { try run(dryRun: dryRun) }
+    }
+    #expect(t.links(in: "flat") == links)
+    // Without --prune nothing is lost, so the run goes ahead.
+    #expect(try run(prune: false).0.created == 1)
+    try t.fm.removeItem(atPath: t.root + "/flat/stray.jpg")
+    try t.fm.removeItem(atPath: t.root + "/Volumes/Photos/Library")
+
+    try attach()
+    #expect(unmountedDrive(holding: t.root + "/Volumes/Photos/Library", volumes: t.root + "/Volumes") == nil)
+    let (summary, events) = try run()
+    #expect(summary.kept == 2 && summary.pruned == 0 && events.isEmpty)
+}
+
+@Test func onlyFoldersBelowTheVolumesFolderCanBeStandIns() throws {
+    let t = try Tree()
+    try t.touch("Pictures/a.jpg")
+    #expect(unmountedDrive(holding: t.root + "/Pictures", volumes: t.root + "/Volumes") == nil)
+    #expect(unmountedDrive(holding: "/Users", volumes: "/Volumes") == nil)
+}
+
 // MARK: - Names and paths
 
 @Test func imagesWithTheSameLinkNameAreReportedNotDropped() throws {
