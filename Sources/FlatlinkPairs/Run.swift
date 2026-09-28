@@ -100,6 +100,25 @@ public final class Run {
         if case .finished(let outcome) = phase { outcome } else { nil }
     }
 
+    /// The last run went wrong or left photos out. Shown on the Dock icon too, since an update may have
+    /// run by itself with the window closed.
+    public var needsAttention: Bool {
+        switch phase {
+        case .failed: true
+        case .finished(let outcome): !outcome.issues.isEmpty
+        case .idle, .scanning: false
+        }
+    }
+
+    /// The photo folder can't be watched, so nothing will update by itself: said, rather than left to look
+    /// as if it were watching.
+    public func couldNotWatch() {
+        stopWatching()
+        interrupt()
+        phase = .failed("Flatlink can't watch the photo folder, so the links won't update by themselves. "
+            + "Click Update Links after each import, or turn Update automatically off and on to try again.")
+    }
+
     public func preview(_ pair: Pair) { start(pair, apply: false) }
     public func update(_ pair: Pair) { start(pair, apply: true) }
 
