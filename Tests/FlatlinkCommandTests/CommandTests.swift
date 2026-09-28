@@ -207,6 +207,35 @@ func extensionsThatCannotBeOnesAreRejected(value: String) {
     ])
 }
 
+@Test func namesThatCouldTakeOverTheTerminalArePrintedEscaped() throws {
+    let box = try Sandbox()
+    // A clear-screen sequence, a line break passing for a line of output, and text reversed to hide its extension.
+    try box.touch("photos/\u{1B}[2J.jpg", "photos/x.jpg\nlink  fake.jpg", "photos/day\u{202E}gpj.exe.jpg")
+    try box.touch("photos/café.jpg", "photos/👨‍👩‍👧.jpg", "photos/tab\there.jpg", "photos/rtl עברית.jpg")
+
+    let result = box.flatlink("photos", "flat")
+    #expect(result.status == 0 && result.err.isEmpty)
+    #expect(result.out.dropLast().sorted() == [
+        "link  \\u{1B}[2J.jpg",
+        "link  café.jpg",
+        "link  day\\u{202E}gpj.exe.jpg",
+        "link  rtl עברית.jpg",
+        "link  tab\\there.jpg",
+        "link  x.jpg\\nlink  fake.jpg",
+        "link  👨‍👩‍👧.jpg",
+    ])
+    #expect(!result.out.joined().unicodeScalars.contains { $0.properties.generalCategory == .control && $0 != "\n" })
+    // What is shown is only how the name is printed: the links keep the names as they are.
+    #expect(box.links(in: "flat").contains("\u{1B}[2J.jpg"))
+}
+
+@Test func shownEscapesControlAndDirectionCharactersOnly() {
+    #expect(shown("a\u{0}b\u{7F}c\u{9B}d") == "a\\u{0}b\\u{7F}c\\u{9B}d")
+    #expect(shown("\r\n\t") == "\\r\\n\\t")
+    #expect(shown("\u{200F}\u{2066}\u{2069}") == "\\u{200F}\\u{2066}\\u{2069}")
+    #expect(shown("2026/Ísland 👨‍👩‍👧 \\ \"x\"") == "2026/Ísland 👨‍👩‍👧 \\ \"x\"")
+}
+
 @Test func foldersThatCannotBeReadAreNamedAndExitWith1() throws {
     let box = try Sandbox()
     try box.touch("photos/open/a.jpg", "photos/locked/b.jpg")
