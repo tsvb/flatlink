@@ -221,7 +221,8 @@ cd App && xcodegen generate && open Flatlink.xcodeproj
 ```
 
 The Xcode project is generated from [App/project.yml](App/project.yml) by
-[XcodeGen](https://github.com/yonaskolb/XcodeGen) and not committed. The app is not sandboxed, for
+[XcodeGen](https://github.com/yonaskolb/XcodeGen) and not committed; releases and CI use the version
+in [.xcodegen-version](.xcodegen-version). The app is not sandboxed, for
 the same reason the command isn't: it reads whole photo trees and checks where every link leads.
 The icon is drawn by [App/scripts/make-icon.swift](App/scripts/make-icon.swift), and
 [App/scripts/open-as-login-item.swift](App/scripts/open-as-login-item.swift) opens a build the way

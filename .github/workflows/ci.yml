@@ -68,8 +68,18 @@ jobs:
           xcode="/Applications/Xcode_$(cat .xcode-version).app/Contents/Developer"
           test -d "$xcode"
           echo "DEVELOPER_DIR=$xcode" >> "$GITHUB_ENV"
+      # The version releases are built with, checked against the checksum GitHub recorded for its release,
+      # rather than whatever Homebrew has that day. Bump .xcodegen-version and this checksum together.
       - name: Install XcodeGen
-        run: brew install xcodegen
+        env:
+          XCODEGEN_SHA256: 090ec29491aad50aec10631bf6e62253fed733c50f3aab0f5ffc86bc170bdbef
+        run: |
+          zip="$RUNNER_TEMP/xcodegen.zip"
+          curl -fsSL -o "$zip" "https://github.com/yonaskolb/XcodeGen/releases/download/$(cat .xcodegen-version)/xcodegen.zip"
+          echo "$XCODEGEN_SHA256  $zip" | shasum -a 256 -c -
+          unzip -q "$zip" -d "$RUNNER_TEMP"
+          [[ "$("$RUNNER_TEMP/xcodegen/bin/xcodegen" --version)" == "Version: $(cat .xcodegen-version)" ]]
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
       # The .xcodeproj is generated and not committed; there is nothing to build until this runs.
       - name: Generate the project
         working-directory: App
