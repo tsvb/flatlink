@@ -934,3 +934,99 @@ func hdiutil(_ arguments: String...) throws -> Int32 {
     let summary = try carryOut(try plan(FlattenOptions(source: t.root + "/src", dest: t.root + "/flat")), dryRun: false)
     #expect(summary.created == 50 && summary.failed == 0)
 }
+
+// MARK: - Changing a link without losing what took its place
+
+/// Only what `takeAside` and `replaceLink` leave behind: no hidden names.
+private func leftovers(_ t: Tree) -> [String] {
+    ((try? t.fm.contentsOfDirectory(atPath: t.root + "/flat")) ?? []).filter { $0.hasPrefix(asidePrefix) }
+}
+
+@Test func aLinkIsTakenAsideOnlyWhileItIsStillTheOneThePlanSaw() throws {
+    let t = try Tree()
+    try t.touch("src/a.jpg", "src/b.jpg")
+    try t.fm.createDirectory(atPath: t.root + "/flat", withIntermediateDirectories: true)
+    let link = t.root + "/flat/a.jpg"
+    try t.fm.createSymbolicLink(atPath: link, withDestinationPath: t.root + "/src/a.jpg")
+
+    let aside = try takeAside(link, leadingTo: t.root + "/src/a.jpg")
+    #expect(!t.fm.fileExists(atPath: link) && (try? t.fm.destinationOfSymbolicLink(atPath: aside)) == t.root + "/src/a.jpg")
+    unlink(aside)
+
+    // A file saved in the link's place since the plan: put back, untouched.
+    #expect(t.fm.createFile(atPath: link, contents: Data("export".utf8)))
+    #expect(throws: ChangedSincePlanned.self) { try takeAside(link, leadingTo: t.root + "/src/a.jpg") }
+    #expect(t.fm.contents(atPath: link) == Data("export".utf8))
+    try t.fm.removeItem(atPath: link)
+
+    // Another link: put back too.
+    try t.fm.createSymbolicLink(atPath: link, withDestinationPath: t.root + "/src/b.jpg")
+    #expect(throws: ChangedSincePlanned.self) { try takeAside(link, leadingTo: t.root + "/src/a.jpg") }
+    #expect((try? t.fm.destinationOfSymbolicLink(atPath: link)) == t.root + "/src/b.jpg")
+    try t.fm.removeItem(atPath: link)
+
+    // Nothing there any more.
+    #expect(throws: ChangedSincePlanned.self) { try takeAside(link, leadingTo: t.root + "/src/a.jpg") }
+    #expect(leftovers(t).isEmpty)
+}
+
+@Test func whatWasTakenAsideStaysAsideWhenItsNameIsTakenAgain() throws {
+    let t = try Tree()
+    try t.touch("flat/aside.txt", "flat/a.jpg")
+    #expect(throws: LeftAside.self) { try putBack(t.root + "/flat/aside.txt", at: t.root + "/flat/a.jpg") }
+    #expect(t.fm.fileExists(atPath: t.root + "/flat/aside.txt") && t.fm.fileExists(atPath: t.root + "/flat/a.jpg"))
+}
+
+@Test func relinkingKeepsTheNameAndReplacesOnlyTheLinkThePlanSaw() throws {
+    let t = try Tree()
+    try t.touch("src/new.jpg")
+    try t.fm.createDirectory(atPath: t.root + "/flat", withIntermediateDirectories: true)
+    let link = t.root + "/flat/a.jpg"
+    try t.fm.createSymbolicLink(atPath: link, withDestinationPath: t.root + "/old/a.jpg")
+
+    try replaceLink(at: link, leadingTo: t.root + "/old/a.jpg", with: t.root + "/src/new.jpg")
+    #expect(t.links(in: "flat") == ["a.jpg": t.root + "/src/new.jpg"])
+
+    // A file saved in its place since: kept, and nothing half-made is left behind.
+    try t.fm.removeItem(atPath: link)
+    #expect(t.fm.createFile(atPath: link, contents: Data("export".utf8)))
+    #expect(throws: ChangedSincePlanned.self) {
+        try replaceLink(at: link, leadingTo: t.root + "/old/a.jpg", with: t.root + "/src/new.jpg")
+    }
+    #expect(t.fm.contents(atPath: link) == Data("export".utf8))
+    #expect(leftovers(t).isEmpty)
+}
+
+@Test func aRunRemovesTheLinksAStoppedRunLeftButNothingElse() throws {
+    let t = try Tree()
+    try t.touch("src/a.jpg", "flat/\(asidePrefix)kept.txt")
+    try t.fm.createSymbolicLink(atPath: t.root + "/flat/\(asidePrefix)stale", withDestinationPath: t.root + "/src/a.jpg")
+
+    // A dry run changes nothing, not even this.
+    _ = try t.run { $0.dryRun = true }
+    #expect(leftovers(t).count == 2)
+
+    let (summary, events) = try t.run()
+    #expect(summary.created == 1 && events == [.link("a.jpg")])
+    #expect(leftovers(t) == ["\(asidePrefix)kept.txt"])
+}
+
+// MARK: - Paths and names
+
+@Test func theStartupDriveIsNotAPhotoFolder() throws {
+    let t = try Tree()
+    #expect(throws: FlattenError.sourceIsStartupDrive) { try plan(FlattenOptions(source: "/", dest: t.root + "/flat")) }
+    #expect(!t.fm.fileExists(atPath: t.root + "/flat"))
+}
+
+@Test func pathsBelowTheirRoot() {
+    #expect(relativePath("/Volumes/Photos/2026/a.jpg", below: "/Volumes/Photos") == "2026/a.jpg")
+    #expect(relativePath("/Users/a.jpg", below: "/") == "Users/a.jpg")
+}
+
+@Test func accentsWrittenTwoWaysAreNotTheSameBytes() {
+    // Swift's == takes them for one string; a network drive can hold one file named each way.
+    #expect("é.jpg" == "e\u{301}.jpg")
+    #expect(!sameBytes("é.jpg", "e\u{301}.jpg"))
+    #expect(sameBytes("é.jpg", "é.jpg"))
+}

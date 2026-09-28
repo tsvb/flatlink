@@ -300,6 +300,8 @@ public final class Run {
         case .sourceOnOtherDrive:
             return "The photo folder is on a different drive from the one it was chosen on, so nothing was changed. "
                 + "If this is the right drive, choose the photo folder again."
+        case .sourceIsStartupDrive:
+            return "The photo folder can't be the whole startup drive. Choose the folder that holds your photos."
         case .destIsSource:
             return "The link folder must be a different folder from the photos."
         case .destNotFolder(let path):

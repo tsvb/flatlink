@@ -106,7 +106,7 @@ public final class SourceWatcher: @unchecked Sendable {
         guard flags & naming != 0, flags & kFSEventStreamEventFlagItemIsSymlink == 0 else { return false }
         guard isInside(path, root), path != dest, !isInside(path, dest) else { return false }
 
-        let components = path.dropFirst(root.count + 1).split(separator: "/")
+        let components = relativePath(path, below: root).split(separator: "/")
         guard !components.contains(where: { $0.hasPrefix(".") }) else { return false }
         // Package contents are never linked: a Photos library inside the source changes all the time.
         var folder = root
