@@ -99,6 +99,8 @@ archs=$(lipo -archs "$APP/Contents/MacOS/Flatlink")
 [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || fail "the app is not universal: $archs"
 [[ "$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$APP/Contents/Info.plist")" == "$VERSION" ]] \
   || fail "the app's Info.plist does not say version $VERSION"
+[[ "$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$APP/Contents/Info.plist")" == "$VERSION" ]] \
+  || fail "the app's Info.plist does not say build $VERSION"
 # One signature covers the bundle only while there is nothing nested in it to sign first.
 [[ ! -e "$APP/Contents/Frameworks" && ! -e "$APP/Contents/PlugIns" ]] || fail "the app embeds code; sign it too"
 
