@@ -13,8 +13,11 @@
 # Environment:
 #   DEVELOPER_DIR    Xcode to build with (default: /Applications/Xcode.app — never a beta).
 #                    It must be the version in .xcode-version, which CI builds with too.
+#                    XcodeGen, likewise, must be the version in .xcodegen-version.
 #   SIGN_IDENTITY    codesign identity (default: the one "Developer ID Application" identity)
-#   NOTARY_PROFILE   notarytool keychain profile (default: PhotoDropNotary)
+#   NOTARY_PROFILE   notarytool keychain profile (default: PhotoDropNotary, the Developer ID
+#                    credentials this Mac keeps for all its apps, stored once with
+#                    xcrun notarytool store-credentials)
 set -euo pipefail
 
 VERSION="${1:?usage: scripts/release.sh <version>, e.g. 0.1.0}"
@@ -31,6 +34,9 @@ grep -q "^let version = \"$VERSION\"$" Sources/flatlink/main.swift \
 grep -q "^        MARKETING_VERSION: \"$VERSION\"$" App/project.yml \
   || fail "App/project.yml does not say MARKETING_VERSION $VERSION"
 command -v xcodegen >/dev/null || fail "XcodeGen is needed to build the app: brew install xcodegen"
+xcodegen=$(xcodegen --version)
+[[ "$xcodegen" == "Version: $(<.xcodegen-version)" ]] \
+  || fail "XcodeGen is ${xcodegen#Version: }, but .xcodegen-version says $(<.xcodegen-version), which CI builds with"
 xcode=$(xcodebuild -version)
 [[ "${xcode%%$'\n'*}" == "Xcode $(<.xcode-version)" ]] \
   || fail "building with ${xcode%%$'\n'*}, but .xcode-version says $(<.xcode-version)"
