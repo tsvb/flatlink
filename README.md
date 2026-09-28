@@ -1,18 +1,34 @@
-# flatlink
+<div align="center">
 
-See every photo in a folder tree in **one DxO PhotoLab grid**.
+<img src="docs/assets/banner.svg" alt="flatlink: every photo in a folder tree, in one DxO PhotoLab grid" width="820">
+
+<p>
+  <a href="https://github.com/tsvb/flatlink/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tsvb/flatlink/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/tsvb/flatlink/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/tsvb/flatlink?color=E89E29"></a>
+  <img alt="Platform: macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple&logoColor=white">
+  <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue">
+</p>
+
+<p>
+  <a href="#install">Install</a> ·
+  <a href="#use">Use</a> ·
+  <a href="#options">Options</a> ·
+  <a href="#tips">Tips</a> ·
+  <a href="#where-your-edits-are-saved">Your edits</a> ·
+  <a href="#why-photolab-needs-this">Why</a>
+</p>
+
+</div>
 
 PhotoLab's folder browser shows only the images at the top level of the folder you select. Photos
 filed in subfolders — by year, by day, by camera — never appear together. `flatlink` builds a
 flat folder of symlinks to every image in a tree. Open that folder in PhotoLab and it's all there.
 
-```text
-Photos/                                  PhotoLab-All/
-├─ 2026/                                 ├─ 2026__2026-05-28__IMG_0001.CR3  → Photos/2026/2026-05-28/IMG_0001.CR3
-│  ├─ 2026-05-28/IMG_0001.CR3    ──►     ├─ 2026__2026-05-29__IMG_0042.CR3  → …
-│  └─ 2026-05-29/IMG_0042.CR3            └─ X100VI__DSCF1234.RAF            → …
-└─ X100VI/DSCF1234.RAF
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+  <img src="docs/assets/how-it-works-light.svg" width="820" alt="On the left, the folder tree Photos: 2026/2026-05-28/IMG_0001.CR3, 2026/2026-05-29/IMG_0042.CR3 and X100VI/DSCF1234.RAF. On the right, the flat folder PhotoLab-All, holding the links 2026__2026-05-28__IMG_0001.CR3, 2026__2026-05-29__IMG_0042.CR3 and X100VI__DSCF1234.RAF, each pointing at its original.">
+</picture>
 
 Your photos are never moved, copied or modified. The only thing the tool ever creates or removes is
 symlinks inside the folder you point it at, and that folder itself if it isn't there yet.
@@ -32,10 +48,21 @@ No Python or other runtime needed. macOS only: there is no Windows or Linux vers
 flatlink ~/Pictures/Photos ~/Pictures/PhotoLab-All
 ```
 
+```text
+link  2026__2026-05-28__IMG_0001.CR3
+link  2026__2026-05-29__IMG_0042.CR3
+link  X100VI__DSCF1234.RAF
+
+created 3, kept 0, skipped 0, pruned 0  ->  /Users/you/Pictures/PhotoLab-All
+```
+
 Then open `~/Pictures/PhotoLab-All` in PhotoLab.
 
 Run the same command again after each import: existing links are kept and only new photos are
-linked. Link names carry the path below the source, so they sort by folder.
+linked. A link is named after the path below the source, joined with `__`, so
+`2026/2026-05-28/IMG_0001.CR3` becomes `2026__2026-05-28__IMG_0001.CR3` and the links sort by folder.
+
+### Options
 
 | Option | Effect |
 | --- | --- |
@@ -47,35 +74,66 @@ linked. Link names carry the path below the source, so they sort by folder.
 | `-h`, `--help` | Show the help. |
 | `--version` | Show the version. |
 
+`--ext cr3`, `--ext .CR3` and `--ext=cr3` all mean the same. An extension that isn't in the list
+below is linked all the same, with a note saying so.
+
+<details>
+<summary>The formats linked by default</summary>
+
+| Kind | Extensions |
+| --- | --- |
+| JPEG | `jpg` `jpeg` `jpe` |
+| TIFF | `tif` `tiff` |
+| HEIC | `heic` `heif` |
+| PNG | `png` |
+| RAW | `3fr` `arw` `cr2` `cr3` `crw` `dng` `erf` `fff` `gpr` `iiq` `mef` `mos` `mrw` `nef` `nrw` `orf` `pef` `raf` `rw2` `rwl` `sr2` `srf` `srw` `x3f` |
+
+Upper or lower case makes no difference.
+
+</details>
+
+### What is linked, and what is left alone
+
 Hidden files, the contents of packages (such as `.photoslibrary`), existing symlinks and the
 destination folder itself are skipped. A file already in the destination is never replaced: it is
 reported and left alone. So is a link that points somewhere else, with one exception: a broken link
 that was made for the same photo, or that points into the source, is pointed at the photo again.
 
+### When a photo is left out
+
 Every photo that is left out is named on stderr, with the reason:
 
-- **Two photos with the same link name.** Names are joined with `__`, so `a/b__c.jpg` and
-  `a__b/c.jpg` both ask for `a__b__c.jpg`, and on a drive that ignores case so do `IMG.JPG` and
-  `img.jpg`. The link stays with the photo it already leads to, or goes to the first by path; rename
-  one of the others to bring it in.
-- **A folder that can't be read**, for lack of permission. Its photos are missing from the link
-  folder until it can.
-- **A link name that is too long.** A file name holds 255 bytes, which a very deep path can exceed.
+| It says | What happened, and what to do |
+| --- | --- |
+| `skip (link name … belongs to …)` | **Two photos with the same link name.** Names are joined with `__`, so `a/b__c.jpg` and `a__b/c.jpg` both ask for `a__b__c.jpg`, and on a drive that ignores case so do `IMG.JPG` and `img.jpg`. The link stays with the photo it already leads to, or goes to the first by path; rename one of the others to bring it in. |
+| `skip (real file in the way)` | **A file with the link's name is already in the link folder.** It is never replaced; move it out to let the link in. |
+| `skip (link exists, points elsewhere)` | **A link with that name leads to something else.** It is left alone; remove it if it isn't one you need. |
+| `unreadable` | **A folder that can't be read**, for lack of permission. Its photos are missing from the link folder until it can. |
+| `failed` | **A link name that is too long.** A file name holds 255 bytes, which a very deep path can exceed; shorten the names of the folders above the photo. Any other reason a link could not be made or removed is given in the same way. |
 
-Exit status: `0` every image under the source has its link; `1` some don't, no image was found, a
-link could not be removed or the link folder can't be used (each is named on stderr); `64` usage
-error, or a source that is not a folder.
+### Exit status
 
-To undo, remove the links and nothing else, which leaves the edits saved in the link folder where
-they are:
+| Status | Meaning |
+| --- | --- |
+| `0` | Every image under the source has its link. |
+| `1` | Some images don't, no image was found, a link could not be removed or the link folder can't be used. Each is named on stderr. |
+| `64` | Usage error, a source that is not a folder, or a destination that is the source. |
+
+### Undo
+
+Remove the links and nothing else, which leaves the edits saved in the link folder where they are:
 
 ```bash
 find ~/Pictures/PhotoLab-All -maxdepth 1 -type l -delete
 ```
 
-To remove the tool: `brew uninstall flatlink`.
+To remove the tool:
 
-### Tips
+```bash
+brew uninstall flatlink
+```
+
+## Tips
 
 - **External drives:** put the link folder on the same drive as the photos
   (`/Volumes/Photos/PhotoLab-All`), so it travels with the drive. The drive must be formatted APFS or
@@ -90,11 +148,15 @@ To remove the tool: `brew uninstall flatlink`.
 - **Large archives:** a folder of many thousands of images can make PhotoLab slow to browse. Run the
   tool once per camera or per year into separate link folders if it does.
 
-### Where your edits are saved
+## Where your edits are saved
 
-PhotoLab saves your edits in a `.dop` sidecar **beside the link**, named after it
-(`PhotoLab-All/2026__2026-05-28__IMG_0001.CR3.dop`), not beside the original. The original photo is
-never touched. (Measured in PhotoLab 9.12.)
+PhotoLab saves your edits in a `.dop` sidecar **beside the link**, named after it, not beside the
+original. The original photo is never touched. (Measured in PhotoLab 9.12.)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/edits-dark.svg">
+  <img src="docs/assets/edits-light.svg" width="820" alt="The original, Photos/2026/2026-05-28/IMG_0001.CR3, is never touched. The link folder PhotoLab-All holds the link 2026__2026-05-28__IMG_0001.CR3 and, beside it, 2026__2026-05-28__IMG_0001.CR3.dop: your edits, a real file saved there by PhotoLab.">
+</picture>
 
 That makes the link folder the home of your PhotoLab edits, so:
 
@@ -118,12 +180,16 @@ does resolve symlinks and aliases, which is what this tool relies on. (Measured 
 
 ```bash
 swift build -c release
+```
+
+```bash
 swift test
 ```
 
-Requires Xcode 16 or later. No dependencies. Releases are built, signed, notarized and tagged by
-[scripts/release.sh](scripts/release.sh), with the Xcode named in [.xcode-version](.xcode-version);
-CI builds and tests with the same one, on Apple silicon and on Intel.
+The binary is `.build/release/flatlink`. Requires Xcode 16 or later. No dependencies. Releases are
+built, signed, notarized and tagged by [scripts/release.sh](scripts/release.sh), with the Xcode named
+in [.xcode-version](.xcode-version); CI builds and tests with the same one, on Apple silicon and on
+Intel.
 
 ## License
 

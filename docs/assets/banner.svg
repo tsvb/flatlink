@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" role="img" aria-label="flatlink: every photo in a folder tree, in one DxO PhotoLab grid">
+  <title>flatlink</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0A2438"/>
+      <stop offset="0.5" stop-color="#0D3654"/>
+      <stop offset="1" stop-color="#155178"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.2" cy="0.1" r="0.9">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.13"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Card panel: self-contained, so it reads on light and dark backgrounds alike -->
+  <rect x="6" y="6" width="1188" height="328" rx="26" fill="url(#bg)"/>
+  <rect x="6" y="6" width="1188" height="328" rx="26" fill="url(#glow)"/>
+
+  <!-- Wordmark, set in the face it is typed in -->
+  <text font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace" x="70" y="142" font-size="88" font-weight="700" letter-spacing="-2" fill="#FFFFFF">flatlink</text>
+  <text font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" x="74" y="192" font-size="26" font-weight="500" fill="#FFFFFF" fill-opacity="0.88">Every photo in a folder tree,</text>
+  <text font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" x="74" y="226" font-size="26" font-weight="500" fill="#FFFFFF" fill-opacity="0.88">in one DxO PhotoLab grid.</text>
+  <text font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace" x="74" y="278" font-size="20" fill="#BFDDF2" fill-opacity="0.8"><tspan fill="#E89E29" fill-opacity="1">$</tspan> flatlink Photos PhotoLab-All</text>
+
+  <!-- Photos filed at different depths, and below them one flat row of links, each pointing at its original -->
+  <g transform="translate(0 8)">
+    <path d="M954.5,50 V72 M812.0,72 H1097.0 M812.0,72 V112 M755.0,112 H869.0 M755.0,112 V152 M717.0,152 H793.0 M717.0,152 V170 M793.0,152 V170 M869.0,112 V170 M983.0,72 V112 M945.0,112 H1021.0 M945.0,112 V130 M1021.0,112 V130 M1097.0,72 V90" fill="none" stroke="#FFFFFF" stroke-opacity="0.5" stroke-width="2" stroke-linecap="round"/>
+    <path transform="translate(939.5,26)" d="M0,4 a3,3 0 0 1 3,-3 h8 l3.5,4 h12.5 a3,3 0 0 1 3,3 v12 a3,3 0 0 1 -3,3 h-24 a3,3 0 0 1 -3,-3 z" fill="#FFFFFF" fill-opacity="0.9"/>
+    <circle cx="954.5" cy="72" r="4.5" fill="#FFFFFF" fill-opacity="0.9"/>
+    <circle cx="812.0" cy="112" r="4.5" fill="#FFFFFF" fill-opacity="0.9"/>
+    <circle cx="755.0" cy="152" r="4.5" fill="#FFFFFF" fill-opacity="0.9"/>
+    <circle cx="869.0" cy="152" r="4.5" fill="#FFFFFF" fill-opacity="0.9"/>
+    <circle cx="983.0" cy="112" r="4.5" fill="#FFFFFF" fill-opacity="0.9"/>
+    <path d="M717.0,252 V217" fill="none" stroke="#E89E29" stroke-width="2" stroke-dasharray="1 6" stroke-linecap="round"/>
+    <path d="M711.0,219 L717.0,211 L723.0,219" fill="none" stroke="#E89E29" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="690" y="170" width="54" height="36" rx="6" fill="#FFFFFF" fill-opacity="0.96"/>
+    <rect x="690" y="252" width="54" height="36" rx="6" fill="#E89E29"/>
+    <path d="M793.0,252 V217" fill="none" stroke="#E89E29" stroke-width="2" stroke-dasharray="1 6" stroke-linecap="round"/>
+    <path d="M787.0,219 L793.0,211 L799.0,219" fill="none" stroke="#E89E29" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="766" y="170" width="54" height="36" rx="6" fill="#FFFFFF" fill-opacity="0.96"/>
+    <rect x="766" y="252" width="54" height="36" rx="6" fill="#E89E29"/>
+    <path d="M869.0,252 V217" fill="none" stroke="#E89E29" stroke-width="2" stroke-dasharray="1 6" stroke-linecap="round"/>
+    <path d="M863.0,219 L869.0,211 L875.0,219" fill="none" stroke="#E89E29" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="842" y="170" width="54" height="36" rx="6" fill="#FFFFFF" fill-opacity="0.96"/>
+    <rect x="842" y="252" width="54" height="36" rx="6" fill="#E89E29"/>
+    <path d="M945.0,252 V177" fill="none" stroke="#E89E29" stroke-width="2" stroke-dasharray="1 6" stroke-linecap="round"/>
+    <path d="M939.0,179 L945.0,171 L951.0,179" fill="none" stroke="#E89E29" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="918" y="130" width="54" height="36" rx="6" fill="#FFFFFF" fill-opacity="0.96"/>
+    <rect x="918" y="252" width="54" height="36" rx="6" fill="#E89E29"/>
+    <path d="M1021.0,252 V177" fill="none" stroke="#E89E29" stroke-width="2" stroke-dasharray="1 6" stroke-linecap="round"/>
+    <path d="M1015.0,179 L1021.0,171 L1027.0,179" fill="none" stroke="#E89E29" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="994" y="130" width="54" height="36" rx="6" fill="#FFFFFF" fill-opacity="0.96"/>
+    <rect x="994" y="252" width="54" height="36" rx="6" fill="#E89E29"/>
+    <path d="M1097.0,252 V137" fill="none" stroke="#E89E29" stroke-width="2" stroke-dasharray="1 6" stroke-linecap="round"/>
+    <path d="M1091.0,139 L1097.0,131 L1103.0,139" fill="none" stroke="#E89E29" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="1070" y="90" width="54" height="36" rx="6" fill="#FFFFFF" fill-opacity="0.96"/>
+    <rect x="1070" y="252" width="54" height="36" rx="6" fill="#E89E29"/>
+  </g>
+</svg>
