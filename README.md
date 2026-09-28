@@ -188,8 +188,8 @@ swift test
 
 The binary is `.build/release/flatlink`. Requires Xcode 16 or later. No dependencies. Releases are
 built, signed, notarized and tagged by [scripts/release.sh](scripts/release.sh), with the Xcode named
-in [.xcode-version](.xcode-version); CI builds and tests with the same one, on Apple silicon and on
-Intel.
+in [.xcode-version](.xcode-version); CI builds and tests with the same one, on Apple silicon and,
+under Rosetta, on Intel.
 
 ## The app
 

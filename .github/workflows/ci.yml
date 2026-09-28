@@ -13,16 +13,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Xcode 27 is only on the xcode-27 image, which GitHub still calls a preview, and there is no Intel
+  # image with it: the Intel half is built and tested here, under Rosetta. macos-26 once it has
+  # Xcode 27 would do as well.
   test:
-    name: Build & test (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: arm64, runner: macos-26 }
-          - { arch: x86_64, runner: macos-26-intel }
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    name: Build & test (arm64, and x86_64 under Rosetta)
+    runs-on: xcode-27
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Select the Xcode that releases are built with
@@ -31,17 +28,34 @@ jobs:
           test -d "$xcode"
           echo "DEVELOPER_DIR=$xcode" >> "$GITHUB_ENV"
       - run: xcodebuild -version && xcrun swift --version
+      - name: Rosetta, for the Intel half
+        run: arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
       - name: Build the universal binary
-        run: xcrun swift build -c release --arch arm64 --arch x86_64 -Xswiftc -warnings-as-errors
-      - run: xcrun swift test
-      - name: Smoke test (runs the ${{ matrix.arch }} half)
         run: |
-          bin=.build/apple/Products/Release/flatlink
-          lipo "$bin" -verify_arch arm64 x86_64
-          test "$(uname -m)" = "${{ matrix.arch }}"
-          mkdir -p "$RUNNER_TEMP/s/day" && touch "$RUNNER_TEMP/s/day/A.DNG" "$RUNNER_TEMP/s/day/A.JPG" "$RUNNER_TEMP/s/B.jpg"
-          "$bin" --skip-paired-jpegs "$RUNNER_TEMP/s" "$RUNNER_TEMP/f"
-          test "$(find "$RUNNER_TEMP/f" -type l | wc -l | tr -d ' ')" = 2
+          xcrun swift build -c release --arch arm64 --arch x86_64 -Xswiftc -warnings-as-errors
+          # Where it lands moved in Xcode 27 (apple/ became out/), so it is asked for, not assumed.
+          echo "BIN=$(xcrun swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/flatlink" >> "$GITHUB_ENV"
+      - name: Test (arm64)
+        run: xcrun swift test
+      # swiftpm's test runner is arm64 only; xctest is universal, and runs Swift Testing too.
+      - name: Test (x86_64, under Rosetta)
+        run: |
+          xcrun swift build --build-tests --arch x86_64
+          tests=$(xcrun swift build --build-tests --arch x86_64 --show-bin-path)
+          for bundle in "$tests"/*.xctest; do
+            [[ "$(lipo -archs "$bundle/Contents/MacOS/$(basename "$bundle" .xctest)")" == x86_64 ]]
+            arch -x86_64 "$(xcrun --find xctest)" "$bundle"
+          done
+      - name: Smoke test both halves
+        run: |
+          archs=$(lipo -archs "$BIN")
+          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "::error::not universal: $archs"; exit 1; }
+          for half in arm64 x86_64; do
+            s="$RUNNER_TEMP/$half/s" f="$RUNNER_TEMP/$half/f"
+            mkdir -p "$s/day" && touch "$s/day/A.DNG" "$s/day/A.JPG" "$s/B.jpg"
+            arch "-$half" "$BIN" --skip-paired-jpegs "$s" "$f"
+            test "$(find "$f" -type l | wc -l | tr -d ' ')" = 2
+          done
 
   app:
     name: Build the app

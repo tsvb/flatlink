@@ -68,7 +68,8 @@ step test xcrun swift test --scratch-path "$WORK/build"
 
 echo "▸ build (arm64 + x86_64)"
 step build xcrun swift build -c release --arch arm64 --arch x86_64 --scratch-path "$WORK/build" -Xswiftc -warnings-as-errors
-BIN="$WORK/build/apple/Products/Release/flatlink"
+# Where it lands moved in Xcode 27 (apple/ became out/), so it is asked for, not assumed.
+BIN="$(xcrun swift build -c release --arch arm64 --arch x86_64 --scratch-path "$WORK/build" --show-bin-path)/flatlink"
 [[ "$(lipo -archs "$BIN")" == *arm64* && "$(lipo -archs "$BIN")" == *x86_64* ]] || fail "binary is not universal"
 
 STAGE="dist/flatlink-$VERSION"
