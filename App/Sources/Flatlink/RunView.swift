@@ -1,4 +1,5 @@
 import FlatlinkCore
+import FlatlinkPairs
 import SwiftUI
 
 /// What the last preview or update found, or how far the current one has got.

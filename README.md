@@ -208,7 +208,9 @@ under Rosetta, on Intel.
 Flatlink.app ([install](#install); source in [App/](App)) puts a window on the same code: keep a list of photo folders and their
 link folders, preview what would change, update with one click, and open the result in PhotoLab.
 
-With **Update automatically** on, it watches the photo folder and updates the links a few seconds
+Adding a photo folder changes nothing on disk. The app suggests a link folder beside it (or inside it, for a
+drive's top folder), and the first links are made when you click **Update Links** or turn on
+**Update automatically**, which is off for a new folder. With it on, the app watches the photo folder and updates the links a few seconds
 after an import has finished: new photos are linked, and with pruning on, deleted ones unlinked.
 It catches up when it starts, when the switch is turned on and when the drive is plugged back in,
 and it keeps watching with its window closed, for as long as it runs. Turn on **Open Flatlink at

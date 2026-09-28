@@ -1,4 +1,5 @@
 import FlatlinkCore
+import FlatlinkPairs
 import Foundation
 import Observation
 
@@ -260,8 +261,9 @@ final class Run {
             return "The link folder must be a different folder from the photos."
         case .destNotFolder(let path):
             return "The link folder can't be used: \(path) is not a folder."
-        case .destNotWritable:
-            return "Flatlink can't write to the link folder."
+        case .destNotWritable(let path):
+            return "Flatlink can't write to the link folder \((path as NSString).abbreviatingWithTildeInPath). "
+                + "Choose a link folder you can write to, on the same drive as the photos."
         case .pruneFoundNoImages:
             return "No photos were found in the photo folder, so nothing was pruned: that is what an unplugged "
                 + "drive looks like. Is the drive connected, and is this the right folder?"

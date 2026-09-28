@@ -1,68 +1,8 @@
 import AppKit
 import FlatlinkCore
+import FlatlinkPairs
 import Foundation
 import Observation
-
-/// A photo folder and the flat link folder made from it, with the options it is run with.
-struct Pair: Codable, Identifiable, Hashable {
-    var id = UUID()
-    var source = "" {
-        didSet { sourceVolume = volumeIdentity(of: source) }
-    }
-    /// The drive the source was chosen on, so that another drive mounted in its place is never taken for it.
-    var sourceVolume: String?
-    var dest = ""
-    var skipPairedJPEGs = false
-    var prune = false
-    /// Update by itself when photos are added, moved or deleted in the source.
-    var watch = true
-
-    var name: String { source.isEmpty ? "New pair" : (source as NSString).lastPathComponent }
-    var destName: String { dest.isEmpty ? "" : (dest as NSString).lastPathComponent }
-    var isReady: Bool { !source.isEmpty && !dest.isEmpty }
-
-    var options: FlattenOptions {
-        var options = FlattenOptions(source: source, dest: dest)
-        options.skipPairedJPEGs = skipPairedJPEGs
-        options.prune = prune
-        options.sourceVolume = sourceVolume
-        return options
-    }
-
-    init(id: UUID = UUID(), source: String = "", dest: String = "") {
-        self.id = id
-        self.source = source
-        self.dest = dest
-        sourceVolume = volumeIdentity(of: source)
-    }
-
-    /// Keys added later may be missing from what an earlier version saved.
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(UUID.self, forKey: .id)
-        source = try c.decode(String.self, forKey: .source)
-        sourceVolume = try c.decodeIfPresent(String.self, forKey: .sourceVolume)
-        dest = try c.decode(String.self, forKey: .dest)
-        skipPairedJPEGs = try c.decodeIfPresent(Bool.self, forKey: .skipPairedJPEGs) ?? false
-        prune = try c.decodeIfPresent(Bool.self, forKey: .prune) ?? false
-        watch = try c.decodeIfPresent(Bool.self, forKey: .watch) ?? false
-    }
-
-    /// What a watcher looks at. The other options only matter to the runs it sets off.
-    var watched: WatchedFolders? {
-        watch && isReady ? WatchedFolders(source: source, dest: dest) : nil
-    }
-
-    /// Where a link folder goes by default: beside the photos, so it travels with their drive.
-    static func suggestedDest(for source: String) -> String {
-        ((source as NSString).deletingLastPathComponent as NSString).appendingPathComponent("PhotoLab-All")
-    }
-}
-
-struct WatchedFolders: Equatable {
-    var source: String
-    var dest: String
-}
 
 /// The saved pairs, and what each is doing.
 @MainActor @Observable
@@ -76,12 +16,19 @@ final class Library {
     private(set) var runs: [Pair.ID: Run] = [:]
     @ObservationIgnored private var watchers: [Pair.ID: (folders: WatchedFolders, watcher: SourceWatcher)] = [:]
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    /// Saved entries this version can't read, saved back with the pairs so that they are never lost.
+    @ObservationIgnored private var unreadable: [Data] = []
 
     private static let key = "pairs"
+    /// Where saved pairs that can't be read at all are put aside, rather than saved over.
+    private static let unreadableKey = "pairs.unreadable"
 
     init() {
         let saved = UserDefaults.standard.data(forKey: Self.key)
-        pairs = saved.flatMap { try? JSONDecoder().decode([Pair].self, from: $0) } ?? []
+        let read = saved.flatMap(SavedPairs.init(decoding:))
+        if let saved, read == nil { UserDefaults.standard.set(saved, forKey: Self.unreadableKey) }
+        pairs = read?.pairs ?? []
+        unreadable = read?.unreadable ?? []
         // A pair saved before its drive was recorded learns it now, if the drive is there.
         // Saved only then: a launch given its pairs as an argument must never write them over the saved ones.
         var learned = false
@@ -156,7 +103,7 @@ final class Library {
 
     private func volumeChanged(_ volume: String?, mounted: Bool) {
         guard let volume else { return }
-        for pair in pairs where pair.watched != nil && pair.source.hasPrefix(volume + "/") {
+        for pair in pairs where pair.watched != nil && pair.isOnVolume(volume) {
             if mounted {
                 watchers[pair.id]?.watcher.stop()
                 watchers[pair.id] = nil
@@ -168,7 +115,7 @@ final class Library {
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(pairs) else { return }
+        guard let data = try? SavedPairs(pairs: pairs, unreadable: unreadable).encoded() else { return }
         UserDefaults.standard.set(data, forKey: Self.key)
     }
 }
