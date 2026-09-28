@@ -41,6 +41,7 @@ final class Library {
         for pair in pairs { runs[pair.id] = Run() }
         syncWatchers()
         observeVolumes()
+        showAttentionOnDock()
     }
 
     var isWatching: Bool { !watchers.isEmpty }
@@ -82,7 +83,11 @@ final class Library {
             let watcher = SourceWatcher(FlattenOptions(source: folders.source, dest: folders.dest)) { [weak self] _ in
                 Task { @MainActor in self?.runs[id]?.sourceChanged() }
             }
-            watcher.start()
+            // Not kept when it can't start, so the next change to the pairs tries again.
+            guard watcher.start() else {
+                runs[id]?.couldNotWatch()
+                continue
+            }
             watchers[id] = (folders, watcher)
             runs[id]?.startWatching { [weak self] in self?.pairs.first { $0.id == id } }
         }
@@ -113,6 +118,17 @@ final class Library {
             }
         }
         if mounted { syncWatchers() }
+    }
+
+    /// How many pairs need a look, as a badge on the Dock icon: automatic updates run with the window
+    /// closed, and a problem they meet would otherwise go unseen until it is opened.
+    private func showAttentionOnDock() {
+        let count = withObservationTracking {
+            pairs.filter { runs[$0.id]?.needsAttention == true }.count
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.showAttentionOnDock() }
+        }
+        NSApplication.shared.dockTile.badgeLabel = count > 0 ? count.formatted() : nil
     }
 
     private func save() {
