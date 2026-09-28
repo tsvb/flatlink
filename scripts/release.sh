@@ -65,13 +65,16 @@ step() {
   local log="$WORK/$1.log"
   shift
   "$@" >"$log" 2>&1 || { cat "$log" >&2; fail "failed: $*"; }
-  tail -1 "$log"
+  grep -v '^[[:space:]]*$' "$log" | tail -1
 }
 
 echo "▸ test"
 step test xcrun swift test --scratch-path "$WORK/build"
 
 echo "▸ build (arm64 + x86_64)"
+# Xcode 27 records the deployment target (14.0) as the SDK version of whatever it builds from a Swift
+# package, with swift build or xcodebuild alike; an Xcode project target, like the app, records the
+# SDK it was built with. It links against the current SDK all the same: only that number differs.
 step build xcrun swift build -c release --arch arm64 --arch x86_64 --scratch-path "$WORK/build" -Xswiftc -warnings-as-errors
 # Where it lands moved in Xcode 27 (apple/ became out/), so it is asked for, not assumed.
 BIN="$(xcrun swift build -c release --arch arm64 --arch x86_64 --scratch-path "$WORK/build" --show-bin-path)/flatlink"
@@ -133,13 +136,14 @@ pid=$!
 sleep 4
 kill -0 "$pid" 2>/dev/null || { cat "$WORK/app-run.log" >&2; fail "the signed app quit within 4 seconds of starting"; }
 kill "$pid"
+wait "$pid" 2>/dev/null || true
 
 # Submits a zip for notarization, and fails unless it is accepted.
 notarize() {
   local out
   out=$(xcrun notarytool submit "$1" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1) \
     || { echo "$out" >&2; fail "notarytool failed"; }
-  grep -E '^\s*(id|status):' <<<"$out" | sed 's/^ */  /'
+  grep -E '^\s*(id|status):' <<<"$out" | sed 's/^ */  /' | awk '!seen[$0]++'
   grep -q 'status: Accepted' <<<"$out" \
     || { echo "$out" >&2; fail "notarization was not accepted; see 'xcrun notarytool log <id> --keychain-profile $NOTARY_PROFILE'"; }
 }
@@ -159,6 +163,22 @@ ditto -c -k --norsrc --noextattr --keepParent "$STAGE" "$WORK/$NAME"
 notarize "$WORK/$NAME"
 mv "$WORK/$NAME" "$ZIP"
 SHA=$(checksum "$NAME")
+
+echo "▸ wait for Gatekeeper to find the command's ticket"
+# A bare binary can't carry its ticket, so Gatekeeper looks it up online by its cdhash. Right after
+# notarization it can still find none, and a download in that window is refused ("Apple could not
+# verify…"): measured for 1.1.0, some five minutes although the ticket service already had it.
+# So the release is not called ready until a downloaded copy — quarantined, as a browser leaves it —
+# is accepted here. spctl only assesses it: nothing is run, so no dialog appears.
+for ((try = 1; ; try++)); do
+  probe="$WORK/gatekeeper-$try"
+  cp "$STAGE/flatlink" "$probe"
+  xattr -w com.apple.quarantine "0081;$(printf %x "$(date +%s)");release.sh;" "$probe"
+  verdict=$(spctl --assess --type install -vv "$probe" 2>&1 || true)
+  grep -q 'source=Notarized Developer ID' <<<"$verdict" && { echo "  accepted after $(( (try - 1) / 2 )) min"; break; }
+  (( try < 40 )) || { echo "$verdict" >&2; fail "Gatekeeper still refuses the command after 20 minutes; not tagged"; }
+  sleep 30
+done
 
 echo "▸ notarize and staple the app"
 ditto -c -k --norsrc --noextattr --keepParent "$APP" "$WORK/app-submit.zip"
