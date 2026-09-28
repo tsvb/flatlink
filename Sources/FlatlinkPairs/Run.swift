@@ -87,6 +87,8 @@ public final class Run {
     private var anotherPass = false
     /// Keeps App Nap from stretching the quiet period while an update is due.
     private var activity: NSObjectProtocol?
+    /// The last run started in each link folder, which the next run there waits for.
+    private static var running: [String: (token: UUID, task: Task<Void, Never>)] = [:]
 
     public init() {}
 
@@ -213,7 +215,13 @@ public final class Run {
         let previous: Phase? = if case .scanning = phase { nil } else { phase }
         phase = .scanning(nil)
 
+        // One run at a time in a link folder, whichever pair it is for: a run that is cancelled finishes
+        // the change it is making, and two runs planned side by side would both make the same links.
+        let folder = canonicalPath(options.dest)
+        let before = Self.running[folder]?.task
         let job = Task.detached(priority: .userInitiated) { [weak self] () throws -> (FlattenPlan, Outcome) in
+            await before?.value
+            try Task.checkCancellation()
             let made = try reuse ?? FlatlinkCore.plan(options) { progress in
                 Task { @MainActor in self?.progressed(progress, generation) }
             }
@@ -223,6 +231,12 @@ public final class Run {
             let outcome = Outcome(summary: summary, events: events, applied: apply, automatic: automatic, source: options.source)
             return (made, outcome)
         }
+
+        let token = UUID()
+        Self.running[folder] = (token, Task {
+            _ = await job.result
+            if Self.running[folder]?.token == token { Self.running[folder] = nil }
+        })
 
         task = Task {
             do {

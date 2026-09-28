@@ -870,3 +870,19 @@ func hdiutil(_ arguments: String...) throws -> Int32 {
     }
     await #expect(throws: CancellationError.self) { try await task.value }
 }
+
+@Test func carryingOutStopsWhenItsTaskIsCancelled() async throws {
+    let t = try Tree()
+    for i in 0..<50 { try t.touch("src/\(i).jpg") }
+    let made = try plan(FlattenOptions(source: t.root + "/src", dest: t.root + "/flat"))
+    let task = Task {
+        withUnsafeCurrentTask { $0?.cancel() }
+        return try carryOut(made, dryRun: false)
+    }
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(t.links(in: "flat").isEmpty)
+
+    // What a cancelled run leaves is picked up by the next.
+    let summary = try carryOut(try plan(FlattenOptions(source: t.root + "/src", dest: t.root + "/flat")), dryRun: false)
+    #expect(summary.created == 50 && summary.failed == 0)
+}
