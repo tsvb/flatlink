@@ -201,7 +201,8 @@ swift test
 The binary is `.build/release/flatlink`. Requires Xcode 16 or later. No dependencies. Releases are
 built, signed, notarized and tagged by [scripts/release.sh](scripts/release.sh), with the Xcode named
 in [.xcode-version](.xcode-version); CI builds and tests with the same one, on Apple silicon and,
-under Rosetta, on Intel.
+under Rosetta, on Intel. [scripts/publish.sh](scripts/publish.sh) then pushes the tag, creates the
+GitHub release and points the Homebrew casks at it.
 
 ## The app
 

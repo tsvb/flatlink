@@ -64,7 +64,9 @@ echo "▸ flatlink $VERSION from ${COMMIT:0:7} — ${xcode%%$'\n'*}, Swift ${BAS
 
 # Everything is built from scratch in a folder of its own, so nothing stale gets into a release.
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+# The app tried below is quit too, if the script stops while it is open.
+pid=""
+trap 'if [[ -n "$pid" ]]; then kill "$pid" 2>/dev/null || true; fi; rm -rf "$WORK"' EXIT
 
 # Runs a step, showing its last line — or all of its output when it fails.
 step() {
@@ -113,11 +115,13 @@ cp "$BIN" "$STAGE/flatlink"
 cp LICENSE "$STAGE/"
 
 echo "▸ sign"
-codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$STAGE/flatlink"
+# Named like the app, rather than after the file: that is how Gatekeeper and the notary service know it.
+codesign --force --options runtime --timestamp --identifier com.tsvb.flatlink --sign "$SIGN_IDENTITY" "$STAGE/flatlink"
 step verify codesign --verify --strict --verbose=2 "$STAGE/flatlink"
 # Match captured output: `cmd | grep -q` fails under pipefail when grep exits early (SIGPIPE).
 sig=$(codesign -dv "$STAGE/flatlink" 2>&1)
 grep -q 'flags=.*runtime' <<<"$sig" || fail "hardened runtime flag missing"
+grep -q '^Identifier=com.tsvb.flatlink$' <<<"$sig" || fail "the binary is not signed as com.tsvb.flatlink"
 
 echo "▸ try both halves of the signed binary"
 for half in arm64 x86_64; do
@@ -145,6 +149,7 @@ sleep 4
 kill -0 "$pid" 2>/dev/null || { cat "$WORK/app-run.log" >&2; fail "the signed app quit within 4 seconds of starting"; }
 kill "$pid"
 wait "$pid" 2>/dev/null || true
+pid=""
 
 # Submits a zip for notarization, and fails unless it is accepted.
 notarize() {
@@ -208,11 +213,9 @@ git tag -a "v$VERSION" -m "flatlink $VERSION" "$COMMIT"
 
 cat <<EOF2
 
-✓ $ZIP and $APP_ZIP are signed and notarized, and ${COMMIT:0:7} is tagged v$VERSION. To publish:
-  git push origin v$VERSION
-  gh release create v$VERSION "$ZIP" "$ZIP.sha256" "$APP_ZIP" "$APP_ZIP.sha256" --title "flatlink $VERSION" --notes "…"
-  then in tsvb/homebrew-tap (casks, not formulae: an unbottled formula needs current Command
-  Line Tools to install, a cask never does) set version "$VERSION" and
-    Casks/flatlink.rb      sha256 "$SHA"
-    Casks/flatlink-app.rb  sha256 "$APP_SHA"
+✓ $ZIP and $APP_ZIP are signed and notarized, and ${COMMIT:0:7} is tagged v$VERSION.
+  flatlink      sha256 $SHA
+  flatlink-app  sha256 $APP_SHA
+To publish (tag, GitHub release and Homebrew casks), write the release notes to a file and run:
+  scripts/publish.sh $VERSION <notes.md>
 EOF2
