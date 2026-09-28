@@ -1,24 +1,23 @@
 import FlatlinkCore
-import FlatlinkPairs
 import Foundation
 import Observation
 
 /// What became of one preview or update, sorted for showing.
-struct Outcome: Sendable {
-    var summary: FlattenSummary
-    var applied: Bool
+public struct Outcome: Sendable {
+    public var summary: FlattenSummary
+    public var applied: Bool
     /// Set off by the watcher rather than by a click.
-    var automatic = false
-    var date = Date()
-    var linked: [String] = []
-    var relinked: [String] = []
-    var pruned: [String] = []
-    var issues: [Issue] = []
+    public var automatic = false
+    public var date = Date()
+    public var linked: [String] = []
+    public var relinked: [String] = []
+    public var pruned: [String] = []
+    public var issues: [Issue] = []
 
-    struct Issue: Identifiable, Sendable {
-        var id: Int
-        var title: String
-        var detail: String
+    public struct Issue: Identifiable, Sendable {
+        public var id: Int
+        public var title: String
+        public var detail: String
     }
 
     init(summary: FlattenSummary, events: [FlattenEvent], applied: Bool, automatic: Bool = false, source: String) {
@@ -49,15 +48,15 @@ struct Outcome: Sendable {
         }
     }
 
-    var isUpToDate: Bool { linked.isEmpty && relinked.isEmpty && pruned.isEmpty && issues.isEmpty }
+    public var isUpToDate: Bool { linked.isEmpty && relinked.isEmpty && pruned.isEmpty && issues.isEmpty }
     /// Changes still to make, when this was only a preview.
-    var pending: Int { applied ? 0 : linked.count + relinked.count + pruned.count }
+    public var pending: Int { applied ? 0 : linked.count + relinked.count + pruned.count }
 }
 
 /// Previews and updates for one pair, run away from the main thread.
 @MainActor @Observable
-final class Run {
-    enum Phase {
+public final class Run {
+    public enum Phase {
         case idle
         case scanning(ScanProgress?)
         case finished(Outcome)
@@ -65,18 +64,18 @@ final class Run {
     }
 
     /// Whether this pair updates by itself.
-    enum Watch {
+    public enum Watch {
         case off
         case watching
         /// The source isn't there, which for a folder on an external drive usually means it's unplugged.
         case waitingForSource
     }
 
-    private(set) var phase: Phase = .idle
-    private(set) var watch: Watch = .off
+    public private(set) var phase: Phase = .idle
+    public private(set) var watch: Watch = .off
     /// How long a source must be quiet before an update: an import copies photos one by one, and
     /// one update at its end is better than one per photo.
-    static let quietPeriod: Duration = .seconds(5)
+    public static let quietPeriod: Duration = .seconds(5)
     /// The plan behind the last preview, which Update carries out as it was shown.
     private var planned: (options: FlattenOptions, plan: FlattenPlan)?
     private var task: Task<Void, Never>?
@@ -89,19 +88,21 @@ final class Run {
     /// Keeps App Nap from stretching the quiet period while an update is due.
     private var activity: NSObjectProtocol?
 
-    var isBusy: Bool {
+    public init() {}
+
+    public var isBusy: Bool {
         if case .scanning = phase { true } else { false }
     }
 
-    var outcome: Outcome? {
+    public var outcome: Outcome? {
         if case .finished(let outcome) = phase { outcome } else { nil }
     }
 
-    func preview(_ pair: Pair) { start(pair, apply: false) }
-    func update(_ pair: Pair) { start(pair, apply: true) }
+    public func preview(_ pair: Pair) { start(pair, apply: false) }
+    public func update(_ pair: Pair) { start(pair, apply: true) }
 
     /// Stops the run going now. An automatic update still due goes ahead.
-    func cancel() {
+    public func cancel() {
         interrupt()
         anotherPass = false
         if pendingUpdate == nil { endActivity() }
@@ -115,24 +116,24 @@ final class Run {
     }
 
     /// The folders or options changed: what was shown no longer describes them.
-    func reset() {
+    public func reset() {
         cancel()
         planned = nil
         phase = .idle
     }
 
-    func forgetPlan() { planned = nil }
+    public func forgetPlan() { planned = nil }
 
     // MARK: Updating by itself
 
-    func startWatching(_ current: @escaping @MainActor () -> Pair?) {
+    public func startWatching(_ current: @escaping @MainActor () -> Pair?) {
         self.current = current
         watch = .watching
         // Catch up with whatever was imported while nothing was watching.
         sourceChanged(after: .seconds(1))
     }
 
-    func stopWatching() {
+    public func stopWatching() {
         watch = .off
         current = nil
         pendingUpdate?.cancel()
@@ -141,7 +142,16 @@ final class Run {
         endActivity()
     }
 
-    func driveWentAway() {
+    /// The pair is gone: nothing more runs for it, not even an update that was due, and App Nap is let be.
+    public func forget() {
+        stopWatching()
+        cancel()
+    }
+
+    /// Whether App Nap is held off, as it is while an update is due or running.
+    var isKeepingAwake: Bool { activity != nil }
+
+    public func driveWentAway() {
         guard watch != .off else { return }
         pendingUpdate?.cancel()
         watch = .waitingForSource
@@ -149,7 +159,7 @@ final class Run {
     }
 
     /// Something changed in the source: update once it has been quiet for a while.
-    func sourceChanged(after delay: Duration = Run.quietPeriod) {
+    public func sourceChanged(after delay: Duration = Run.quietPeriod) {
         guard watch != .off else { return }
         if activity == nil {
             activity = ProcessInfo.processInfo.beginActivity(
@@ -247,7 +257,7 @@ final class Run {
         phase = .scanning(progress)
     }
 
-    static func message(for error: Error) -> String {
+    public static func message(for error: Error) -> String {
         guard let error = error as? FlattenError else { return error.localizedDescription }
         switch error {
         case .sourceNotFolder(let path):

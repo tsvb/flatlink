@@ -80,7 +80,7 @@ linked. A link is named after the path below the source, joined with `__`, so
 | --- | --- |
 | `-n`, `--dry-run` | Show what would change, and what would go wrong; change nothing. Try this first. |
 | `--skip-paired-jpegs` | If you shoot RAW+JPEG, leave out each JPEG that has a RAW of the same name in the same folder, so every shot appears once — as its RAW. |
-| `--prune` | Remove links into the source whose original photo has been deleted. Links to anything outside the source are left alone, and so is a link whose original can't be reached. If the source holds no images at all, nothing is removed: that is what an unplugged drive looks like. |
+| `--prune` | Remove links into the source whose original photo has been deleted, and, with `--skip-paired-jpegs`, links to the JPEGs it now leaves out. Links to anything outside the source are left alone, and so is a link whose original can't be reached. If the source holds no images at all, nothing is removed: that is what an unplugged drive looks like. |
 | `--ext EXT` | Only link files with this extension; repeatable (`--ext cr3 --ext jpg`) or as a list (`--ext cr3,jpg`). Each spelling counts: `--ext jpg` leaves out `.jpeg`. By default: JPEG, TIFF, HEIC, PNG and 24 RAW formats. |
 | `--` | What follows is the source and the destination, even if it starts with `-`. |
 | `-h`, `--help` | Show the help. |

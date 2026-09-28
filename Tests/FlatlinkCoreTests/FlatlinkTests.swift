@@ -159,6 +159,42 @@ final class Tree {
     #expect(summary.created == 2 && summary.paired == 0)
 }
 
+@Test func pruneRemovesLinksToJPEGsNowLeftOutBesideTheirRAW() throws {
+    // Linked before the flag was on: each shot is in the link folder twice until pruning takes the JPEG out.
+    let t = try Tree()
+    try t.touch("src/day/A.DNG", "src/day/A.JPG", "src/day/B.JPG", "src/other.jpg")
+    _ = try t.run()
+    try t.touch("flat/day__A.JPG.dop")
+
+    let (kept, keptEvents) = try t.run { $0.skipPairedJPEGs = true }
+    #expect(kept.pruned == 0 && kept.paired == 1 && keptEvents.isEmpty)
+    #expect(t.links(in: "flat")["day__A.JPG"] != nil)
+
+    let (summary, events) = try t.run { $0.skipPairedJPEGs = true; $0.prune = true }
+    #expect(summary.pruned == 1 && summary.kept == 3 && events == [.prune("day__A.JPG")])
+    #expect(Set(t.links(in: "flat").keys) == ["day__A.DNG", "day__B.JPG", "other.jpg"])
+    #expect(t.fm.fileExists(atPath: t.root + "/src/day/A.JPG"))
+    #expect(t.fm.fileExists(atPath: t.root + "/flat/day__A.JPG.dop"))
+}
+
+@Test func pruneLeavesJPEGLinksAloneWithoutTheFlag() throws {
+    let t = try Tree()
+    try t.touch("src/A.DNG", "src/A.JPG")
+    _ = try t.run()
+    let (summary, _) = try t.run { $0.prune = true }
+    #expect(summary.pruned == 0 && summary.kept == 2)
+}
+
+@Test func pruneLeavesALinkToAPairedJPEGInAnotherSourceAlone() throws {
+    let t = try Tree()
+    try t.touch("src/b.jpg", "other/A.DNG", "other/A.JPG")
+    try t.fm.createDirectory(atPath: t.root + "/flat", withIntermediateDirectories: true)
+    try t.fm.createSymbolicLink(atPath: t.root + "/flat/A.JPG", withDestinationPath: t.root + "/other/A.JPG")
+    let (summary, _) = try t.run { $0.skipPairedJPEGs = true; $0.prune = true }
+    #expect(summary.pruned == 0 && summary.created == 1)
+    #expect(t.links(in: "flat")["A.JPG"] == t.root + "/other/A.JPG")
+}
+
 @Test func rejectsAMissingSourceAndDestEqualToSource() throws {
     let t = try Tree()
     #expect(throws: FlattenError.sourceNotFolder(t.root + "/nope")) { try t.run("nope") }
@@ -477,6 +513,36 @@ func hdiutil(_ arguments: String...) throws -> Int32 {
     #expect(events.contains { if case .failed(name, _) = $0 { true } else { false } })
     #expect(Array(t.links(in: "flat").keys) == ["ok.jpg"])
     #expect(dry == summary && dryEvents == events)
+}
+
+/// APFS holds a name to 255 UTF-16 units, not 255 bytes. Decomposed, as Foundation writes it, each
+/// accented letter is two units but three bytes, so counting bytes refused names that fit.
+@Test func accentedLinkNamesAreMeasuredAsTheyAreStored() throws {
+    let t = try Tree()
+    #expect(Volume(of: t.root).countsUTF16)
+    let accents = String(repeating: "é", count: 60)
+    try t.touch("src/\(accents)/\(accents).jpg")
+    let stored = "\(accents)__\(accents).jpg".decomposedStringWithCanonicalMapping
+    #expect(stored.utf16.count == 246 && stored.utf8.count == 366)
+
+    let (summary, events) = try t.run()
+    #expect(summary.created == 1 && summary.failed == 0, "events: \(events)")
+    #expect(t.links(in: "flat").count == 1)
+
+    // One that is too long as stored still fails: 200 + 2 + 54 + 4 = 260 units.
+    try t.touch("src/\(String(repeating: "é", count: 100))/\(String(repeating: "é", count: 27)).jpg")
+    let (again, _) = try t.run()
+    #expect(again.kept == 1 && again.failed == 1)
+}
+
+@Test func nameLengthCountsDecomposedUnitsOrBytes() throws {
+    var volume = Volume(of: try Tree().root)
+    volume.countsUTF16 = true
+    #expect(volume.length(of: "é") == 2 && volume.length(of: "e\u{301}") == 2)
+    #expect(volume.length(of: "😀") == 2 && volume.length(of: "写") == 1)
+    volume.countsUTF16 = false
+    #expect(volume.length(of: "é") == 3 && volume.length(of: "写") == 3)
+    #expect(volume.length(of: "IMG_0001.CR3") == 12)
 }
 
 /// Destination (and source) addressed through a symlinked path; destination inside the source

@@ -134,7 +134,7 @@ struct PairView: View {
             Toggle(isOn: $pair.prune) {
                 OptionLabel(
                     title: "Remove links to deleted photos",
-                    detail: "Only links into this photo folder whose original is gone. Your edits (.dop files) are never removed."
+                    detail: "Only links into this photo folder whose original is gone, or is a JPEG skipped beside its RAW. Your edits (.dop files) are never removed."
                 )
             }
         }

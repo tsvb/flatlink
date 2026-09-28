@@ -197,14 +197,16 @@ public func plan(_ options: FlattenOptions, progress: (ScanProgress) -> Void = {
 
     if options.prune, anchor == dest {
         do {
-            // Only links into this source whose original is gone. A link into another folder or drive
-            // is not ours to judge, and an original that can't be reached is not a deleted one.
+            // Only links into this source whose original is gone, or is a JPEG now left out beside its
+            // RAW. A link into another folder or drive is not ours to judge, and an original that can't
+            // be reached is not a deleted one.
             let stale = try fm.contentsOfDirectory(atPath: dest).sorted().compactMap { name -> (String, String)? in
                 let link = dest + "/" + name
                 guard wanted[volume.key(name)] == nil, let target = try? fm.destinationOfSymbolicLink(atPath: link) else {
                     return nil
                 }
-                return isInside(target, root) && targetIsGone(link) ? (name, target) : nil
+                guard isInside(target, root) else { return nil }
+                return scan.pairedJPEGs.contains(target) || targetIsGone(link) ? (name, target) : nil
             }
             // A source without images but with links into it looks like the empty mount point of an
             // unplugged drive, not like a library whose photos were all deleted.
@@ -288,7 +290,9 @@ struct Volume {
         var info = statfs()
         if statfs(folder, &info) == 0 {
             let type = withUnsafeBytes(of: info.f_fstypename) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
-            countsUTF16 = type == "hfs"
+            // These hold a name to 255 UTF-16 units, not 255 bytes: an accented letter is two units
+            // decomposed, but four bytes. Anything else is measured in bytes, which is never too lenient.
+            countsUTF16 = ["apfs", "hfs", "exfat", "msdos"].contains(type)
         }
     }
 
@@ -298,7 +302,8 @@ struct Volume {
         caseSensitive ? name : name.lowercased()
     }
 
-    /// Names are stored with their accents decomposed.
+    /// Names are stored with their accents decomposed: Foundation decomposes every path it hands the
+    /// file system.
     func length(of name: String) -> Int {
         let stored = name.decomposedStringWithCanonicalMapping
         return countsUTF16 ? stored.utf16.count : stored.utf8.count
@@ -362,7 +367,9 @@ func replaceLink(at link: String, target: String) throws {
 struct Scan {
     /// Absolute paths of the images to link, sorted.
     var images: [String] = []
-    var paired = 0
+    /// Absolute paths of the JPEGs left out because a RAW of the same name is beside them.
+    var pairedJPEGs: Set<String> = []
+    var paired: Int { pairedJPEGs.count }
     var unreadable: [(path: String, message: String)] = []
 }
 
@@ -418,7 +425,7 @@ func scanImages(
         for name in names {
             guard let (stem, ext) = splitExtension(name), options.extensions.contains(ext) else { continue }
             if ImageTypes.jpeg.contains(ext), rawStems.contains(stem) {
-                scan.paired += 1
+                scan.pairedJPEGs.insert(folder + "/" + name)
                 continue
             }
             scan.images.append(folder + "/" + name)

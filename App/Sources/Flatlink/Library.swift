@@ -57,7 +57,8 @@ final class Library {
 
     /// Forgets a pair. Nothing on disk is touched: its links and edits stay where they are.
     func remove(_ id: Pair.ID) {
-        runs[id]?.cancel()
+        // Forgotten before it is let go: with its run gone, nothing would end an update still due.
+        runs[id]?.forget()
         runs[id] = nil
         pairs.removeAll { $0.id == id }
     }
