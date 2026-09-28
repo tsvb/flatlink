@@ -78,8 +78,9 @@ public func flatten(_ options: FlattenOptions, report: (FlattenEvent) -> Void = 
 enum Step: Sendable {
     case keep
     case link(String, to: String)
-    case relink(String, to: String)
-    case prune(String)
+    /// `from` is where the link led when the plan was made; it is changed only while it still does.
+    case relink(String, to: String, from: String)
+    case prune(String, from: String)
     case skip(FlattenEvent)
     case fail(FlattenEvent)
 }
@@ -165,7 +166,7 @@ public func plan(_ options: FlattenOptions, progress: (ScanProgress) -> Void = {
                 // A link of ours left dangling: the source was moved or renamed, or its drive mounts
                 // elsewhere. Repointing it keeps the link name, and so the edits in its .dop.
                 holder = heir
-                step = .relink(heir.name, to: heir.src)
+                step = .relink(heir.name, to: heir.src, from: target)
             } else {
                 step = .skip(.skipPointsElsewhere(holder.name))
             }
@@ -189,17 +190,17 @@ public func plan(_ options: FlattenOptions, progress: (ScanProgress) -> Void = {
         do {
             // Only links into this source whose original is gone. A link into another folder or drive
             // is not ours to judge, and an original that can't be reached is not a deleted one.
-            let stale = try fm.contentsOfDirectory(atPath: dest).sorted().filter { name in
+            let stale = try fm.contentsOfDirectory(atPath: dest).sorted().compactMap { name -> (String, String)? in
                 let link = dest + "/" + name
                 guard wanted[volume.key(name)] == nil, let target = try? fm.destinationOfSymbolicLink(atPath: link) else {
-                    return false
+                    return nil
                 }
-                return isInside(target, root) && targetIsGone(link)
+                return isInside(target, root) && targetIsGone(link) ? (name, target) : nil
             }
             // A source without images but with links into it looks like the empty mount point of an
             // unplugged drive, not like a library whose photos were all deleted.
             guard stale.isEmpty || !rivalries.isEmpty else { throw FlattenError.pruneFoundNoImages(root) }
-            plan.steps += stale.map { .prune($0) }
+            plan.steps += stale.map { .prune($0, from: $1) }
         } catch let error as FlattenError {
             throw error
         } catch {
@@ -245,10 +246,14 @@ public func carryOut(_ plan: FlattenPlan, dryRun: Bool, report: (FlattenEvent) -
             change(name, .link(name), \.created) {
                 try fm.createSymbolicLink(atPath: plan.dest + "/" + name, withDestinationPath: src)
             }
-        case .relink(let name, let src):
-            change(name, .relink(name), \.relinked) { try replaceLink(at: plan.dest + "/" + name, target: src) }
-        case .prune(let name):
+        case .relink(let name, let src, let old):
+            change(name, .relink(name), \.relinked) {
+                try checkUnchanged(plan.dest + "/" + name, leadsTo: old)
+                try replaceLink(at: plan.dest + "/" + name, target: src)
+            }
+        case .prune(let name, let old):
             change(name, .prune(name), \.pruned) {
+                try checkUnchanged(plan.dest + "/" + name, leadsTo: old)
                 // unlink, not removeItem: it can never remove a folder.
                 guard unlink(plan.dest + "/" + name) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             }
@@ -307,6 +312,21 @@ func isSameFile(_ a: String, _ b: String) -> Bool {
 
 func isInside(_ path: String, _ folder: String) -> Bool {
     path.hasPrefix(folder == "/" ? folder : folder + "/")
+}
+
+/// The name no longer holds the link a plan was made from: a file may have been put in its place.
+struct ChangedSincePlanned: LocalizedError {
+    var errorDescription: String? {
+        "it changed after the plan was made, so it was left alone; run again to see what it is now"
+    }
+}
+
+/// Throws unless `link` is still a symlink leading to `target`, so that a plan made a while ago never
+/// replaces or removes anything but the link it was made for.
+func checkUnchanged(_ link: String, leadsTo target: String) throws {
+    guard (try? FileManager.default.destinationOfSymbolicLink(atPath: link)) == target else {
+        throw ChangedSincePlanned()
+    }
 }
 
 /// Points an existing link at `target` in one step, so a failure never leaves the name without a link.
