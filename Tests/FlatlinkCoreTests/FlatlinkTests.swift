@@ -649,7 +649,7 @@ final class Tree {
     // The plan is made from what is there; by the time it is carried out, something may have changed.
     let t = try Tree()
     try t.touch("src/a.jpg", "src/b.jpg", "flat/taken.jpg")
-    let plan = Plan(dest: t.root + "/flat", found: 3, steps: [
+    let plan = FlattenPlan(dest: t.root + "/flat", found: 3, steps: [
         .link("a.jpg", to: t.root + "/src/a.jpg"),
         .link("taken.jpg", to: t.root + "/src/b.jpg"),       // a file has appeared under the name
         .relink("missing/b.jpg", to: t.root + "/src/b.jpg"), // the folder is not there
@@ -676,7 +676,45 @@ final class Tree {
     let t = try Tree()
     try t.touch("flat/folder/keep.jpg")
     var events: [FlattenEvent] = []
-    let summary = try carryOut(Plan(dest: t.root + "/flat", steps: [.prune("folder")]), dryRun: false) { events.append($0) }
+    let summary = try carryOut(FlattenPlan(dest: t.root + "/flat", steps: [.prune("folder")]), dryRun: false) { events.append($0) }
     #expect(summary.pruned == 0 && summary.failed == 1)
     #expect(t.fm.fileExists(atPath: t.root + "/flat/folder/keep.jpg"))
+}
+
+// MARK: - Planning first, for an app
+
+@Test func aPlanCarriedOutDoesWhatItsDryRunShowed() throws {
+    let t = try Tree()
+    try t.touch("src/a.jpg", "src/day/b.CR3")
+    let options = FlattenOptions(source: t.root + "/src", dest: t.root + "/flat")
+    let made = try plan(options)
+    #expect(made.found == 2 && made.dest == t.root + "/flat")
+
+    var shown: [FlattenEvent] = [], done: [FlattenEvent] = []
+    let dry = try carryOut(made, dryRun: true) { shown.append($0) }
+    #expect(!t.fm.fileExists(atPath: t.root + "/flat"))
+    let real = try carryOut(made, dryRun: false) { done.append($0) }
+    #expect(dry == real && shown == done && done == [.link("a.jpg"), .link("day__b.CR3")])
+}
+
+@Test func planningReportsProgressThroughALargeTree() throws {
+    let t = try Tree()
+    for i in 0..<600 { try t.touch("src/\(i / 100)/\(i).jpg") }
+    var reports: [ScanProgress] = []
+    let made = try plan(FlattenOptions(source: t.root + "/src", dest: t.root + "/flat")) { reports.append($0) }
+    #expect(made.found == 600)
+    #expect(reports.count == 2)
+    #expect(reports.map(\.items) == [256, 512])
+    #expect(reports.allSatisfy { $0.folder.hasPrefix(t.root + "/src/") })
+}
+
+@Test func planningStopsWhenItsTaskIsCancelled() async throws {
+    let t = try Tree()
+    for i in 0..<600 { try t.touch("src/\(i).jpg") }
+    let options = FlattenOptions(source: t.root + "/src", dest: t.root + "/flat")
+    let task = Task {
+        withUnsafeCurrentTask { $0?.cancel() }
+        return try plan(options)
+    }
+    await #expect(throws: CancellationError.self) { try await task.value }
 }
