@@ -231,6 +231,9 @@ public func plan(_ options: FlattenOptions, progress: (ScanProgress) -> Void = {
 
 /// Makes the changes in `plan`, or with `dryRun` only reports them. A change that fails is reported as
 /// `.failed` and counted; the rest go ahead.
+///
+/// Inside a task that is cancelled, this throws `CancellationError` before the next change: the ones
+/// made so far stay, and a later run picks up from there.
 public func carryOut(_ plan: FlattenPlan, dryRun: Bool, report: (FlattenEvent) -> Void = { _ in }) throws -> FlattenSummary {
     let fm = FileManager.default
     if !dryRun {
@@ -250,6 +253,7 @@ public func carryOut(_ plan: FlattenPlan, dryRun: Bool, report: (FlattenEvent) -
     }
 
     for step in plan.steps {
+        try Task.checkCancellation()
         switch step {
         case .keep:
             summary.kept += 1
