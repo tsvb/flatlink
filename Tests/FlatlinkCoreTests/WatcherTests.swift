@@ -151,6 +151,14 @@ private func eventually(_ timeout: Duration = .seconds(10), _ condition: () -> B
         #expect(changes.withLock { $0 } == [.everything], "flags \(flag)")
     }
 
+    // The source coming back, as FSEvents sometimes reports it: a rename of the source itself.
+    changes.withLock { $0 = [] }
+    watcher.received([src], [FSEventStreamEventFlags(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsDir)])
+    #expect(changes.withLock { $0 } == [.everything], "the source renamed back into place")
+    changes.withLock { $0 = [] }
+    watcher.received([src], [FSEventStreamEventFlags(kFSEventStreamEventFlagItemXattrMod | kFSEventStreamEventFlagItemIsDir)])
+    #expect(changes.withLock { $0 }.isEmpty, "a Finder label on the source changes nothing")
+
     changes.withLock { $0 = [] }
     watcher.received([src + "/b.jpg", src + "/notes.txt"], [FSEventStreamEventFlags(created), FSEventStreamEventFlags(created)])
     #expect(changes.withLock { $0 } == [.images([src + "/b.jpg"])])
