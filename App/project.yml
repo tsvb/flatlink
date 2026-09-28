@@ -38,6 +38,8 @@ targets:
     dependencies:
       - package: flatlink
         product: FlatlinkCore
+      - package: flatlink
+        product: FlatlinkPairs
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.tsvb.Flatlink
