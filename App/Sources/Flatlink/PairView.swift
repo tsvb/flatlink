@@ -51,36 +51,20 @@ struct PairView: View {
                     .foregroundStyle(Color.marigold)
                 FolderWell(role: .dest, path: $pair.dest, exists: exists(pair.dest))
             }
-            HStack(spacing: 10) {
-                Toggle(isOn: $pair.watch) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Update automatically")
-                            .fontWeight(.medium)
-                            .foregroundStyle(.white)
-                        Text(watchStatus)
-                            .font(.caption)
-                            .foregroundStyle(run.watch == .waitingForSource ? Color.marigold : Color.paleBlue.opacity(0.85))
-                    }
-                    // A fixed width, so that the switch stays put while the status beside it changes.
-                    .frame(width: 290, alignment: .leading)
+            // Side by side where they fit; in a narrow window the buttons go below, rather than being squeezed
+            // until their titles stand on end.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    watchSwitch
+                    Spacer(minLength: 10)
+                    runButtons
                 }
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .help("When photos are added, moved or deleted in the photo folder, update the links a few seconds later.")
-                Spacer()
-                if run.isBusy {
-                    Button("Cancel") { run.cancel() }
-                        .buttonStyle(CardButtonStyle())
-                        .keyboardShortcut(.cancelAction)
-                } else {
-                    Button("Preview") { run.preview(pair) }
-                        .buttonStyle(CardButtonStyle())
-                        .keyboardShortcut("r")
-                        .help("See what would change, without changing anything (⌘R)")
-                    Button(updateTitle) { run.update(pair) }
-                        .buttonStyle(MarigoldButtonStyle())
-                        .keyboardShortcut(.return, modifiers: .command)
-                        .help("Link new photos now (⌘↩)")
+                VStack(alignment: .leading, spacing: 12) {
+                    watchSwitch
+                    HStack(spacing: 10) {
+                        Spacer(minLength: 0)
+                        runButtons
+                    }
                 }
             }
             .disabled(!pair.isReady)
@@ -97,6 +81,44 @@ struct PairView: View {
         }
         .padding(20)
         .background(.card, in: .rect(cornerRadius: 16))
+    }
+
+    private var watchSwitch: some View {
+        Toggle(isOn: $pair.watch) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Update automatically")
+                    .fontWeight(.medium)
+                    .foregroundStyle(.white)
+                Text(watchStatus)
+                    .font(.caption)
+                    .foregroundStyle(run.watch == .waitingForSource ? Color.marigold : Color.paleBlue.opacity(0.85))
+            }
+            // A fixed width, so that the switch stays put while the status beside it changes.
+            .frame(width: 290, alignment: .leading)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .help("When photos are added, moved or deleted in the photo folder, update the links a few seconds later.")
+    }
+
+    @ViewBuilder private var runButtons: some View {
+        HStack(spacing: 10) {
+            if run.isBusy {
+                Button("Cancel") { run.cancel() }
+                    .buttonStyle(CardButtonStyle())
+                    .keyboardShortcut(.cancelAction)
+            } else {
+                Button("Preview") { run.preview(pair) }
+                    .buttonStyle(CardButtonStyle())
+                    .keyboardShortcut("r")
+                    .help("See what would change, without changing anything (⌘R)")
+                Button(updateTitle) { run.update(pair) }
+                    .buttonStyle(MarigoldButtonStyle())
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("Link new photos now (⌘↩)")
+            }
+        }
+        .fixedSize()
     }
 
     /// Checked each time the card is drawn, which includes after every run: an update makes the link
