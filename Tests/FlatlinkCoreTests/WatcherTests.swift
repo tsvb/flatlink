@@ -50,6 +50,16 @@ private let modified = kFSEventStreamEventFlagItemModified | kFSEventStreamEvent
     #expect(!watcher.isRelevant(t.root + "/src/IMG.JPG", flags: created))
 }
 
+/// Starts a watcher on a tree made just before. FSEvents numbers an event when it gets to it, not when the
+/// file changed, so the making of the tree can still arrive after a start "since now" — later on a busy
+/// machine. It is waited out and forgotten, so that a test sees only what it does itself.
+private func startSettled(_ watcher: SourceWatcher, _ changes: OSAllocatedUnfairLock<[SourceChange]>) async throws {
+    try await Task.sleep(for: .seconds(1))
+    #expect(watcher.start())
+    try await Task.sleep(for: .seconds(1))
+    changes.withLock { $0 = [] }
+}
+
 /// Waits for FSEvents, which delivers within its latency plus some scheduling slack.
 private func eventually(_ timeout: Duration = .seconds(10), _ condition: () -> Bool) async throws -> Bool {
     let clock = ContinuousClock()
@@ -67,9 +77,8 @@ private func eventually(_ timeout: Duration = .seconds(10), _ condition: () -> B
     let changes = OSAllocatedUnfairLock<[SourceChange]>(initialState: [])
     let options = FlattenOptions(source: t.root + "/src", dest: t.root + "/src/_flat")
     let watcher = SourceWatcher(options, latency: 0.1) { change in changes.withLock { $0.append(change) } }
-    #expect(watcher.start())
+    try await startSettled(watcher, changes)
     defer { watcher.stop() }
-    try await Task.sleep(for: .milliseconds(300))
 
     // A run into a link folder inside the source, and other noise: none of it is news.
     _ = try flatten(options)
@@ -93,9 +102,8 @@ private func eventually(_ timeout: Duration = .seconds(10), _ condition: () -> B
     let watcher = SourceWatcher(FlattenOptions(source: t.root + "/src", dest: t.root + "/flat"), latency: 0.1) { change in
         changes.withLock { $0.append(change) }
     }
-    #expect(watcher.start())
+    try await startSettled(watcher, changes)
     defer { watcher.stop() }
-    try await Task.sleep(for: .milliseconds(300))
 
     try t.fm.moveItem(atPath: t.root + "/src", toPath: t.root + "/away")
     #expect(try await eventually { changes.withLock { $0 }.contains(.everything) })
@@ -111,9 +119,10 @@ private func eventually(_ timeout: Duration = .seconds(10), _ condition: () -> B
     let watcher = SourceWatcher(FlattenOptions(source: t.root + "/src", dest: t.root + "/flat"), latency: 0.1) { change in
         changes.withLock { $0.append(change) }
     }
-    #expect(watcher.start())
+    try await startSettled(watcher, changes)
     watcher.stop()
+    let before = changes.withLock { $0 }
     try t.touch("src/b.jpg")
     try await Task.sleep(for: .seconds(1))
-    #expect(changes.withLock { $0 }.isEmpty)
+    #expect(changes.withLock { $0 } == before)
 }
