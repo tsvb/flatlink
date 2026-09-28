@@ -10,7 +10,9 @@ let package = Package(
     ],
     targets: [
         .target(name: "FlatlinkCore"),
-        .executableTarget(name: "flatlink", dependencies: ["FlatlinkCore"]),
+        .target(name: "FlatlinkCommand", dependencies: ["FlatlinkCore"]),
+        .executableTarget(name: "flatlink", dependencies: ["FlatlinkCommand"]),
         .testTarget(name: "FlatlinkCoreTests", dependencies: ["FlatlinkCore"]),
+        .testTarget(name: "FlatlinkCommandTests", dependencies: ["FlatlinkCommand", "FlatlinkCore"]),
     ]
 )
