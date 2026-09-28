@@ -18,7 +18,8 @@ settings:
     Debug:
       ENABLE_HARDENED_RUNTIME: NO
       CODE_SIGN_IDENTITY: "-"
-    # Developer ID + hardened runtime + secure timestamp, as notarization requires.
+    # Developer ID + hardened runtime + secure timestamp, as notarization requires. For builds from
+    # Xcode only: scripts/release.sh builds unsigned and signs with codesign itself, which is what ships.
     Release:
       ENABLE_HARDENED_RUNTIME: YES
       CODE_SIGN_IDENTITY: "Developer ID Application"
