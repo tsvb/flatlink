@@ -236,3 +236,5 @@ macOS does at login, to try that without logging out.
 MIT — see [LICENSE](LICENSE).
 
 Not affiliated with or endorsed by DxO. DxO and PhotoLab are trademarks of DxO Labs.
+
+Made by [Tim VanBenschoten](https://timvanbenschoten.com).
