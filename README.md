@@ -155,6 +155,13 @@ brew uninstall flatlink
   photo folder moves or the drive mounts under another name. Run `flatlink` again with the new
   location and the same link folder: every link is pointed at the new place, under the same name, so
   your edits stay attached.
+
+  A broken link is matched to a photo by its path below the source, and the source it came from isn't
+  recorded, so any folder with the same layout gets its links. **Run a backup copy into a link folder
+  of its own:** run into your usual one while the main drive is unplugged, and its links, with the
+  edits saved beside them, move to the copy. They stay there while the copy is reachable, since only
+  a broken link is moved, and the main drive's run reports each as `skip (link exists, points
+  elsewhere)`. To bring them back, eject or move the copy, then run the main drive again.
 - **One source per link folder:** link names come from the path below the source, so two sources
   that both hold `IMG_0001.CR3` compete for one link, and for the edits saved beside it.
 - **Large archives:** a folder of many thousands of images can make PhotoLab slow to browse. Run the
@@ -176,7 +183,8 @@ That makes the link folder the home of your PhotoLab edits, so:
   into the same folder instead. It only ever adds or removes symlinks, never a `.dop`.
 - **Rename source folders with care.** A link's name comes from its path below the source, so
   renaming `2026-05-28/` gives its photos new links, and PhotoLab sees them as unedited. The old
-  `.dop` files stay in the link folder, under the old names.
+  `.dop` files stay in the link folder, under the old names. A photo that later arrives under one of
+  those names takes over the old link, and the edits saved beside it.
 - **Other apps won't see these edits**, because they aren't beside the original. Export from
   PhotoLab to share the results.
 
