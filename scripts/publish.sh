@@ -63,9 +63,14 @@ read -r -p "Publish flatlink $VERSION: push v$VERSION, create the GitHub release
 echo "▸ push the tag"
 git push origin "v$VERSION"
 
+# Every release's notes end with the project page, added here unless the notes already carry it.
+PROJECT_PAGE="https://timvanbenschoten.com/code/flatlink"
+cp "$NOTES" "$WORK/notes.md"
+grep -qF "$PROJECT_PAGE" "$WORK/notes.md" || printf '\nProject page: %s\n' "$PROJECT_PAGE" >> "$WORK/notes.md"
+
 echo "▸ create the release"
 gh release create "v$VERSION" "dist/$ZIP" "dist/$ZIP.sha256" "dist/$APP_ZIP" "dist/$APP_ZIP.sha256" \
-  --title "flatlink $VERSION" --notes-file "$NOTES"
+  --title "flatlink $VERSION" --notes-file "$WORK/notes.md"
 
 echo "▸ check what GitHub serves"
 gh release download "v$VERSION" --pattern '*.zip' --dir "$WORK/served"
